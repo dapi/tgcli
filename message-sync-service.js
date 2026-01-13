@@ -90,6 +90,7 @@ export default class MessageSyncService {
         target_message_count INTEGER DEFAULT ${DEFAULT_TARGET_MESSAGES},
         message_count INTEGER DEFAULT 0,
         cursor_message_id INTEGER,
+        cursor_message_date TEXT,
         backfill_min_date TEXT,
         last_synced_at TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -101,6 +102,7 @@ export default class MessageSyncService {
     this._ensureJobColumn('target_message_count', `INTEGER DEFAULT ${DEFAULT_TARGET_MESSAGES}`);
     this._ensureJobColumn('message_count', 'INTEGER DEFAULT 0');
     this._ensureJobColumn('cursor_message_id', 'INTEGER');
+    this._ensureJobColumn('cursor_message_date', 'TEXT');
     this._ensureJobColumn('backfill_min_date', 'TEXT');
 
     this.db.exec(`
@@ -160,9 +162,12 @@ export default class MessageSyncService {
     `);
 
     this.insertMessagesTx = this.db.transaction((records) => {
+      let inserted = 0;
       for (const record of records) {
-        this.insertMessageStmt.run(record);
+        const result = this.insertMessageStmt.run(record);
+        inserted += result.changes;
       }
+      return inserted;
     });
   }
 
@@ -240,8 +245,18 @@ export default class MessageSyncService {
     `).run(normalizedId);
 
     const stmt = this.db.prepare(`
-      INSERT INTO jobs (channel_id, status, error, target_message_count, message_count, cursor_message_id, backfill_min_date, updated_at)
-      VALUES (?, '${JOB_STATUS.PENDING}', NULL, ?, 0, NULL, ?, CURRENT_TIMESTAMP)
+      INSERT INTO jobs (
+        channel_id,
+        status,
+        error,
+        target_message_count,
+        message_count,
+        cursor_message_id,
+        cursor_message_date,
+        backfill_min_date,
+        updated_at
+      )
+      VALUES (?, '${JOB_STATUS.PENDING}', NULL, ?, 0, NULL, NULL, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(channel_id) DO UPDATE SET
         status='${JOB_STATUS.PENDING}',
         error=NULL,
@@ -265,6 +280,7 @@ export default class MessageSyncService {
         jobs.target_message_count,
         jobs.message_count,
         jobs.cursor_message_id,
+        jobs.cursor_message_date,
         jobs.backfill_min_date,
         jobs.last_synced_at,
         jobs.created_at,
@@ -497,6 +513,7 @@ export default class MessageSyncService {
           status: JOB_STATUS.PENDING,
           messageCount: backfillResult.finalCount,
           cursorMessageId: backfillResult.cursorMessageId,
+          cursorMessageDate: backfillResult.cursorMessageDate,
         });
         return;
       }
@@ -508,6 +525,7 @@ export default class MessageSyncService {
         status: finalStatus,
         messageCount: backfillResult.finalCount,
         cursorMessageId: backfillResult.cursorMessageId,
+        cursorMessageDate: backfillResult.cursorMessageDate,
       });
     } catch (error) {
       if (this.stopRequested) {
@@ -537,12 +555,13 @@ export default class MessageSyncService {
     `).run(status, id);
   }
 
-  _updateJobRecord(id, { status, messageCount, cursorMessageId }) {
+  _updateJobRecord(id, { status, messageCount, cursorMessageId, cursorMessageDate }) {
     this.db.prepare(`
       UPDATE jobs
       SET status = ?,
           message_count = ?,
           cursor_message_id = ?,
+          cursor_message_date = ?,
           last_synced_at = CURRENT_TIMESTAMP,
           error = NULL,
           updated_at = CURRENT_TIMESTAMP
@@ -551,6 +570,7 @@ export default class MessageSyncService {
       status,
       messageCount ?? 0,
       cursorMessageId ?? null,
+      cursorMessageDate ?? null,
       id,
     );
   }
@@ -874,6 +894,7 @@ export default class MessageSyncService {
         hasMoreOlder: false,
         insertedCount: 0,
         cursorMessageId: job.cursor_message_id ?? null,
+        cursorMessageDate: job.cursor_message_date ?? null,
         stoppedEarly: false,
       };
     }
@@ -888,6 +909,14 @@ export default class MessageSyncService {
     let currentOldestDate = channel?.oldest_message_date ?? null;
     let insertedCount = 0;
     let nextOffsetId = job.cursor_message_id ?? currentOldestId ?? channel?.last_message_id ?? 0;
+    let nextOffsetDate = null;
+    if (job.cursor_message_date) {
+      nextOffsetDate = parseIsoDate(job.cursor_message_date);
+    } else if (currentOldestDate) {
+      nextOffsetDate = parseIsoDate(currentOldestDate);
+    } else if (channel?.last_message_date) {
+      nextOffsetDate = parseIsoDate(channel.last_message_date);
+    }
     let stopDueToDate = false;
     let stoppedEarly = false;
 
@@ -896,7 +925,7 @@ export default class MessageSyncService {
         stoppedEarly = true;
         break;
       }
-      if (!nextOffsetId || nextOffsetId <= 1) {
+      if (nextOffsetId !== 0 && nextOffsetId <= 1) {
         break;
       }
 
@@ -905,13 +934,14 @@ export default class MessageSyncService {
         limit: chunkLimit,
         chunkSize: chunkLimit,
         reverse: false,
-        offset: { id: nextOffsetId, date: 0 },
+        offset: { id: nextOffsetId, date: nextOffsetDate ?? 0 },
         addOffset: 0,
       });
 
       const records = [];
       let lowestIdInChunk = null;
       let lowestDateInChunk = null;
+      let lowestDateSecondsInChunk = null;
 
       for await (const message of iterator) {
         if (this.stopRequested) {
@@ -928,6 +958,7 @@ export default class MessageSyncService {
 
         if (!lowestIdInChunk || serialized.id < lowestIdInChunk) {
           lowestIdInChunk = serialized.id;
+          lowestDateSecondsInChunk = serialized.date ?? null;
           lowestDateInChunk = toIsoString(serialized.date);
         }
       }
@@ -940,15 +971,25 @@ export default class MessageSyncService {
         break;
       }
 
-      this.insertMessagesTx(records);
+      const inserted = this.insertMessagesTx(records);
 
-      total += records.length;
-      insertedCount += records.length;
+      total += inserted;
+      insertedCount += inserted;
+
+      const previousOffsetId = nextOffsetId;
+      const previousOffsetDate = nextOffsetDate ?? 0;
       nextOffsetId = lowestIdInChunk ?? nextOffsetId;
+      if (Number.isFinite(lowestDateSecondsInChunk)) {
+        nextOffsetDate = lowestDateSecondsInChunk;
+      }
 
       if (lowestIdInChunk && (!currentOldestId || lowestIdInChunk < currentOldestId)) {
         currentOldestId = lowestIdInChunk;
         currentOldestDate = lowestDateInChunk || currentOldestDate;
+      }
+
+      if (nextOffsetId === previousOffsetId && (nextOffsetDate ?? 0) === previousOffsetDate) {
+        break;
       }
 
       if (stopDueToDate || total >= targetCount || this.stopRequested) {
@@ -975,6 +1016,9 @@ export default class MessageSyncService {
       hasMoreOlder: insertedCount > 0 && total < targetCount && !stopDueToDate && !stoppedEarly,
       insertedCount,
       cursorMessageId: nextOffsetId ?? job.cursor_message_id ?? null,
+      cursorMessageDate: Number.isFinite(nextOffsetDate) && nextOffsetDate > 0
+        ? toIsoString(nextOffsetDate)
+        : job.cursor_message_date ?? null,
       stoppedEarly,
     };
   }
