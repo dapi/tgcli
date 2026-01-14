@@ -16,6 +16,9 @@ An MCP server allowing AI assistants (like Claude or Cursor) to interact with yo
 | `setChannelTags` | Assigns tags to a channel for cross-channel search. |
 | `listChannelTags` | Lists tags attached to a channel. |
 | `listTaggedChannels` | Lists channels that carry a specific tag. |
+| `refreshChannelMetadata` | Fetches and caches channel descriptions (about/bio) for tagging. |
+| `getChannelMetadata` | Returns cached channel metadata. |
+| `autoTagChannels` | Auto-tags channels based on title/username/description. |
 | `getChannelMessages` | Fetches recent messages (ID or username, optional regex filter). |
 | `listChannelTopics` | Lists forum topics for a supergroup. |
 | `searchChannelTopics` | Searches forum topics by title. |
@@ -121,10 +124,12 @@ There are two separate configurations that need to be set up:
 ## Channel Tags & Cross-Channel Search
 
 - Tag channels with `setChannelTags`, then retrieve them via `listTaggedChannels`.
+- Use `refreshChannelMetadata` to cache descriptions, then `autoTagChannels` to auto-assign tags.
 - Search across tagged channels with `searchTaggedMessages` using an FTS query plus optional date range:
 
   ```
   setChannelTags { "channelId": -1001234567890, "tags": ["ai"] }
+  autoTagChannels { "channelIds": [-1001234567890] }
   searchTaggedMessages { "tag": "ai", "query": "course OR курс", "fromDate": "2025-12-01T00:00:00Z" }
   ```
 

@@ -106,6 +106,57 @@ const listTaggedChannelsSchema = {
   limit: z.number().int().positive().optional().describe("Maximum number of channels to return (default: 100)"),
 };
 
+const refreshChannelMetadataSchema = {
+  channelIds: z
+    .array(
+      z.union([
+        z.number({ invalid_type_error: "channelId must be a number" }),
+        z.string({ invalid_type_error: "channelId must be a string" }).min(1),
+      ]),
+    )
+    .optional()
+    .describe("Optional list of channel IDs/usernames to refresh"),
+  limit: z.number().int().positive().optional().describe("Maximum number of channels to refresh (default: 20)"),
+  force: z
+    .boolean({ invalid_type_error: "force must be a boolean" })
+    .optional()
+    .describe("Refresh even if cached metadata is fresh"),
+  onlyMissing: z
+    .boolean({ invalid_type_error: "onlyMissing must be a boolean" })
+    .optional()
+    .describe("Refresh only channels without cached metadata"),
+};
+
+const getChannelMetadataSchema = {
+  channelId: z
+    .union([
+      z.number({ invalid_type_error: "channelId must be a number" }),
+      z.string({ invalid_type_error: "channelId must be a string" }).min(1),
+    ])
+    .describe("Numeric channel ID or username"),
+};
+
+const autoTagChannelsSchema = {
+  channelIds: z
+    .array(
+      z.union([
+        z.number({ invalid_type_error: "channelId must be a number" }),
+        z.string({ invalid_type_error: "channelId must be a string" }).min(1),
+      ]),
+    )
+    .optional()
+    .describe("Optional list of channel IDs/usernames to tag"),
+  limit: z.number().int().positive().optional().describe("Maximum number of channels to tag (default: 50)"),
+  source: z
+    .string()
+    .optional()
+    .describe("Tag source label (default: auto)"),
+  refreshMetadata: z
+    .boolean({ invalid_type_error: "refreshMetadata must be a boolean" })
+    .optional()
+    .describe("Refresh cached metadata before tagging (default true)"),
+};
+
 const getChannelMessagesSchema = {
   channelId: z
     .union([
@@ -369,6 +420,72 @@ function createServerInstance() {
           {
             type: "text",
             text: JSON.stringify(channels, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "refreshChannelMetadata",
+    "Fetches and caches extended metadata for channels.",
+    refreshChannelMetadataSchema,
+    async ({ channelIds, limit, force, onlyMissing }) => {
+      await telegramClient.ensureLogin();
+      const results = await messageSyncService.refreshChannelMetadata({
+        channelIds,
+        limit,
+        force,
+        onlyMissing,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "getChannelMetadata",
+    "Returns cached metadata for a channel.",
+    getChannelMetadataSchema,
+    async ({ channelId }) => {
+      const metadata = messageSyncService.getChannelMetadata(channelId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(metadata, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "autoTagChannels",
+    "Auto-tags channels based on title, username, and cached metadata.",
+    autoTagChannelsSchema,
+    async ({ channelIds, limit, source, refreshMetadata }) => {
+      await telegramClient.ensureLogin();
+      const results = await messageSyncService.autoTagChannels({
+        channelIds,
+        limit,
+        source,
+        refreshMetadata,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results, null, 2),
           },
         ],
       };

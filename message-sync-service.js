@@ -8,12 +8,167 @@ import { normalizeChannelId } from './telegram-client.js';
 const DEFAULT_DB_PATH = './data/messages.db';
 const DEFAULT_TARGET_MESSAGES = 1000;
 const SEARCH_INDEX_VERSION = 1;
+const METADATA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const JOB_STATUS = {
   PENDING: 'pending',
   IN_PROGRESS: 'in_progress',
   IDLE: 'idle',
   ERROR: 'error',
 };
+
+const TAG_RULES = [
+  {
+    tag: 'ai',
+    patterns: [
+      /\bai\b/iu,
+      /\bartificial intelligence\b/iu,
+      /\bmachine learning\b/iu,
+      /\bml\b/iu,
+      /\bgpt\b/iu,
+      /\bllm\b/iu,
+      /нейросет/iu,
+      /искусственн/iu,
+      /машинн(ое|ого) обучен/iu,
+    ],
+  },
+  {
+    tag: 'memes',
+    patterns: [
+      /\bmeme(s)?\b/iu,
+      /мем/iu,
+      /юмор/iu,
+      /шутк/iu,
+      /\blol\b/iu,
+      /\bkek\b/iu,
+    ],
+  },
+  {
+    tag: 'news',
+    patterns: [
+      /\bnews\b/iu,
+      /новост/iu,
+      /сводк/iu,
+      /дайджест/iu,
+      /\bbreaking\b/iu,
+    ],
+  },
+  {
+    tag: 'crypto',
+    patterns: [
+      /\bcrypto\b/iu,
+      /\bbitcoin\b/iu,
+      /\bbtc\b/iu,
+      /\beth\b/iu,
+      /\bblockchain\b/iu,
+      /крипт/iu,
+      /блокчейн/iu,
+    ],
+  },
+  {
+    tag: 'jobs',
+    patterns: [
+      /\bjob(s)?\b/iu,
+      /ваканс/iu,
+      /работа/iu,
+      /\bhiring\b/iu,
+      /\bcareer\b/iu,
+    ],
+  },
+  {
+    tag: 'events',
+    patterns: [
+      /\bevent(s)?\b/iu,
+      /мероприяти/iu,
+      /встреч/iu,
+      /митап/iu,
+      /конференц/iu,
+    ],
+  },
+  {
+    tag: 'travel',
+    patterns: [
+      /\btravel\b/iu,
+      /\btrip\b/iu,
+      /путешеств/iu,
+      /туризм/iu,
+    ],
+  },
+  {
+    tag: 'finance',
+    patterns: [
+      /\bfinance\b/iu,
+      /финанс/iu,
+      /инвест/iu,
+      /\bstock(s)?\b/iu,
+      /акци/iu,
+    ],
+  },
+  {
+    tag: 'real_estate',
+    patterns: [
+      /\breal estate\b/iu,
+      /недвижим/iu,
+      /аренд/iu,
+      /\brent\b/iu,
+      /квартир/iu,
+    ],
+  },
+  {
+    tag: 'education',
+    patterns: [
+      /\bcourse(s)?\b/iu,
+      /курс/iu,
+      /обучен/iu,
+      /учеб/iu,
+    ],
+  },
+  {
+    tag: 'tech',
+    patterns: [
+      /\btech\b/iu,
+      /технол/iu,
+      /\bsoftware\b/iu,
+      /разработк/iu,
+      /\bdev\b/iu,
+    ],
+  },
+  {
+    tag: 'marketing',
+    patterns: [
+      /\bmarketing\b/iu,
+      /маркетинг/iu,
+      /\bsmm\b/iu,
+      /реклам/iu,
+    ],
+  },
+  {
+    tag: 'gaming',
+    patterns: [
+      /\bgam(e|ing|es)\b/iu,
+      /игр/iu,
+      /стрим/iu,
+    ],
+  },
+  {
+    tag: 'sports',
+    patterns: [
+      /\bsport(s)?\b/iu,
+      /спорт/iu,
+      /футбол/iu,
+      /\bnba\b/iu,
+    ],
+  },
+  {
+    tag: 'health',
+    patterns: [
+      /\bhealth\b/iu,
+      /здоров/iu,
+      /медиц/iu,
+      /fitness/iu,
+      /фитнес/iu,
+    ],
+  },
+];
 
 function normalizeChannelKey(channelId) {
   return String(normalizeChannelId(channelId));
@@ -46,6 +201,28 @@ function normalizeTag(tag) {
   if (!tag) return null;
   const normalized = String(tag).trim().toLowerCase();
   return normalized.replace(/\s+/g, ' ');
+}
+
+function buildTagText({ peerTitle, username, about }) {
+  return [peerTitle, username, about].filter(Boolean).join(' ').trim();
+}
+
+function classifyTags(text) {
+  if (!text) return [];
+  const results = [];
+  for (const rule of TAG_RULES) {
+    let hits = 0;
+    for (const pattern of rule.patterns) {
+      if (pattern.test(text)) {
+        hits += 1;
+      }
+    }
+    if (hits > 0) {
+      const confidence = Math.min(1, hits / 3);
+      results.push({ tag: rule.tag, confidence });
+    }
+  }
+  return results;
 }
 
 export default class MessageSyncService {
@@ -87,6 +264,19 @@ export default class MessageSyncService {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_metadata (
+        channel_id TEXT PRIMARY KEY,
+        about TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS channel_metadata_updated_idx
+      ON channel_metadata (updated_at);
     `);
 
     this.db.exec(`
@@ -248,6 +438,14 @@ export default class MessageSyncService {
       RETURNING channel_id, sync_enabled;
     `);
 
+    this.upsertChannelMetadataStmt = this.db.prepare(`
+      INSERT INTO channel_metadata (channel_id, about, updated_at)
+      VALUES (@channel_id, @about, CURRENT_TIMESTAMP)
+      ON CONFLICT(channel_id) DO UPDATE SET
+        about = excluded.about,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
     this.insertChannelTagStmt = this.db.prepare(`
       INSERT INTO channel_tags (channel_id, tag, source, confidence, updated_at)
       VALUES (@channel_id, @tag, @source, @confidence, CURRENT_TIMESTAMP)
@@ -299,12 +497,12 @@ export default class MessageSyncService {
 
     this.setChannelTagsTx = this.db.transaction((channelId, source, tags) => {
       this.deleteChannelTagsStmt.run(channelId, source);
-      for (const tag of tags) {
+      for (const entry of tags) {
         this.insertChannelTagStmt.run({
           channel_id: channelId,
-          tag,
+          tag: entry.tag,
           source,
-          confidence: null,
+          confidence: entry.confidence ?? null,
         });
       }
     });
@@ -396,7 +594,7 @@ export default class MessageSyncService {
         uniqueTags.add(normalizedTag);
       }
     }
-    const finalTags = [...uniqueTags];
+    const finalTags = [...uniqueTags].map((tag) => ({ tag, confidence: null }));
 
     this.db.prepare(`
       INSERT INTO channels (channel_id, updated_at)
@@ -405,7 +603,7 @@ export default class MessageSyncService {
     `).run(normalizedId);
 
     this.setChannelTagsTx(normalizedId, source, finalTags);
-    return finalTags;
+    return finalTags.map((entry) => entry.tag);
   }
 
   listChannelTags(channelId, options = {}) {
@@ -455,6 +653,181 @@ export default class MessageSyncService {
       source: row.source,
       confidence: row.confidence,
     }));
+  }
+
+  getChannelMetadata(channelId) {
+    const normalizedId = normalizeChannelKey(channelId);
+    const row = this.db.prepare(`
+      SELECT
+        channels.channel_id,
+        channels.peer_title,
+        channels.peer_type,
+        channels.username,
+        channel_metadata.about,
+        channel_metadata.updated_at AS metadata_updated_at
+      FROM channels
+      LEFT JOIN channel_metadata ON channel_metadata.channel_id = channels.channel_id
+      WHERE channels.channel_id = ?
+    `).get(normalizedId);
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      channelId: row.channel_id,
+      peerTitle: row.peer_title,
+      peerType: row.peer_type,
+      username: row.username,
+      about: row.about ?? null,
+      metadataUpdatedAt: row.metadata_updated_at ?? null,
+    };
+  }
+
+  async refreshChannelMetadata(options = {}) {
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 20;
+    const force = Boolean(options.force);
+    const onlyMissing = Boolean(options.onlyMissing);
+    const channelIds = Array.isArray(options.channelIds) ? options.channelIds : null;
+
+    let rows;
+    if (channelIds && channelIds.length) {
+      rows = channelIds.map((id) => this._getChannelWithMetadata(normalizeChannelKey(id))).filter(Boolean);
+    } else {
+      rows = this.db.prepare(`
+        SELECT
+          channels.channel_id,
+          channels.peer_title,
+          channels.peer_type,
+          channels.username,
+          channel_metadata.about,
+          channel_metadata.updated_at AS metadata_updated_at
+        FROM channels
+        LEFT JOIN channel_metadata ON channel_metadata.channel_id = channels.channel_id
+        ORDER BY channels.updated_at DESC
+        LIMIT ?
+      `).all(limit);
+    }
+
+    const results = [];
+    for (const row of rows) {
+      if (onlyMissing && row.metadata_updated_at) {
+        continue;
+      }
+      if (!force && !this._isMetadataStale(row.metadata_updated_at)) {
+        continue;
+      }
+
+      const metadata = await this.telegramClient.getPeerMetadata(
+        row.channel_id,
+        row.peer_type,
+      );
+
+      if (metadata.peerTitle || metadata.peerType || metadata.username) {
+        this.upsertChannelStmt.get({
+          channel_id: row.channel_id,
+          peer_title: metadata.peerTitle ?? row.peer_title ?? null,
+          peer_type: metadata.peerType ?? row.peer_type ?? null,
+          username: metadata.username ?? row.username ?? null,
+        });
+      }
+
+      this.upsertChannelMetadataStmt.run({
+        channel_id: row.channel_id,
+        about: metadata.about ?? null,
+      });
+
+      results.push({
+        channelId: row.channel_id,
+        peerTitle: metadata.peerTitle ?? row.peer_title ?? null,
+        peerType: metadata.peerType ?? row.peer_type ?? null,
+        username: metadata.username ?? row.username ?? null,
+        about: metadata.about ?? null,
+        metadataUpdatedAt: new Date().toISOString(),
+      });
+    }
+
+    return results;
+  }
+
+  async autoTagChannels(options = {}) {
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 50;
+    const source = options.source ? String(options.source) : 'auto';
+    const refreshMetadata = options.refreshMetadata !== false;
+    const channelIds = Array.isArray(options.channelIds) ? options.channelIds : null;
+
+    let rows;
+    if (channelIds && channelIds.length) {
+      rows = channelIds.map((id) => this._getChannelWithMetadata(normalizeChannelKey(id))).filter(Boolean);
+    } else {
+      rows = this.db.prepare(`
+        SELECT
+          channels.channel_id,
+          channels.peer_title,
+          channels.peer_type,
+          channels.username,
+          channel_metadata.about,
+          channel_metadata.updated_at AS metadata_updated_at
+        FROM channels
+        LEFT JOIN channel_metadata ON channel_metadata.channel_id = channels.channel_id
+        ORDER BY channels.updated_at DESC
+        LIMIT ?
+      `).all(limit);
+    }
+
+    const results = [];
+    for (const row of rows) {
+      let about = row.about;
+      let metadataUpdatedAt = row.metadata_updated_at;
+      let peerTitle = row.peer_title;
+      let username = row.username;
+      let peerType = row.peer_type;
+      if (refreshMetadata && this._isMetadataStale(metadataUpdatedAt)) {
+        const metadata = await this.telegramClient.getPeerMetadata(
+          row.channel_id,
+          row.peer_type,
+        );
+        if (metadata.peerTitle || metadata.peerType || metadata.username) {
+          peerTitle = metadata.peerTitle ?? peerTitle;
+          username = metadata.username ?? username;
+          peerType = metadata.peerType ?? peerType;
+          this.upsertChannelStmt.get({
+            channel_id: row.channel_id,
+            peer_title: peerTitle ?? null,
+            peer_type: peerType ?? null,
+            username: username ?? null,
+          });
+        }
+        this.upsertChannelMetadataStmt.run({
+          channel_id: row.channel_id,
+          about: metadata.about ?? null,
+        });
+        about = metadata.about ?? null;
+        metadataUpdatedAt = new Date().toISOString();
+      }
+
+      const tagText = buildTagText({
+        peerTitle,
+        username,
+        about,
+      }).toLowerCase();
+      const tags = classifyTags(tagText);
+      this.setChannelTagsTx(row.channel_id, source, tags);
+
+      results.push({
+        channelId: row.channel_id,
+        peerTitle,
+        peerType,
+        username,
+        tags: tags.map((entry) => ({
+          tag: entry.tag,
+          confidence: entry.confidence,
+        })),
+        metadataUpdatedAt: metadataUpdatedAt ?? null,
+      });
+    }
+
+    return results;
   }
 
   addJob(channelId, options = {}) {
@@ -1008,6 +1381,32 @@ export default class MessageSyncService {
       FROM channels
       WHERE channel_id = ?
     `).get(channelId);
+  }
+
+  _getChannelWithMetadata(channelId) {
+    return this.db.prepare(`
+      SELECT
+        channels.channel_id,
+        channels.peer_title,
+        channels.peer_type,
+        channels.username,
+        channel_metadata.about,
+        channel_metadata.updated_at AS metadata_updated_at
+      FROM channels
+      LEFT JOIN channel_metadata ON channel_metadata.channel_id = channels.channel_id
+      WHERE channels.channel_id = ?
+    `).get(channelId);
+  }
+
+  _isMetadataStale(updatedAt) {
+    if (!updatedAt) {
+      return true;
+    }
+    const ts = new Date(updatedAt).getTime();
+    if (Number.isNaN(ts)) {
+      return true;
+    }
+    return Date.now() - ts > METADATA_TTL_MS;
   }
 
   _updateChannelCursors(channelId, { lastMessageId, lastMessageDate, oldestMessageId, oldestMessageDate }) {

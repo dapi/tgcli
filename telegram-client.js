@@ -284,6 +284,52 @@ class TelegramClient {
     };
   }
 
+  async getPeerMetadata(channelId, peerType) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+
+    const buildUserMetadata = async () => {
+      const user = await this.client.getFullUser(peerRef);
+      return {
+        peerTitle: user.displayName || 'Unknown',
+        username: user.username ?? null,
+        peerType: normalizePeerType(user),
+        about: user.bio || null,
+      };
+    };
+
+    if (peerType === 'user') {
+      return buildUserMetadata();
+    }
+
+    let peerTitle = null;
+    let username = null;
+    let resolvedType = peerType ?? null;
+    try {
+      const chat = await this.client.getChat(peerRef);
+      peerTitle = chat.displayName || chat.title || 'Unknown';
+      username = chat.username ?? null;
+      resolvedType = normalizePeerType(chat);
+    } catch (error) {
+      return buildUserMetadata();
+    }
+
+    let about = null;
+    try {
+      const fullChat = await this.client.getFullChat(peerRef);
+      about = fullChat.bio || null;
+    } catch (error) {
+      about = null;
+    }
+
+    return {
+      peerTitle,
+      username,
+      peerType: resolvedType,
+      about,
+    };
+  }
+
   _serializeMessage(message, peer = null) {
     const resolvedPeer = peer ?? message?.chat ?? null;
     const id = typeof message.id === 'number' ? message.id : Number(message.id || 0);
