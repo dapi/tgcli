@@ -1578,6 +1578,55 @@ export default class MessageSyncService {
     };
   }
 
+  getChannel(channelId) {
+    const normalizedId = normalizeChannelKey(channelId);
+    const row = this.db.prepare(`
+      SELECT
+        channels.channel_id,
+        channels.peer_title,
+        channels.peer_type,
+        channels.chat_type,
+        channels.is_forum,
+        channels.username,
+        channels.sync_enabled,
+        channels.last_message_id,
+        channels.last_message_date,
+        channels.oldest_message_id,
+        channels.oldest_message_date,
+        channels.created_at,
+        channels.updated_at,
+        channel_metadata.about,
+        channel_metadata.updated_at AS metadata_updated_at
+      FROM channels
+      LEFT JOIN channel_metadata ON channel_metadata.channel_id = channels.channel_id
+      WHERE channels.channel_id = ?
+    `).get(normalizedId);
+
+    if (!row) {
+      return null;
+    }
+
+    const syncEnabled = row.sync_enabled;
+    const isForum = row.is_forum;
+    return {
+      channelId: row.channel_id,
+      peerTitle: row.peer_title ?? null,
+      peerType: row.peer_type ?? null,
+      chatType: row.chat_type ?? null,
+      isForum: typeof isForum === 'number' ? Boolean(isForum) : isForum ?? null,
+      username: row.username ?? null,
+      syncEnabled: typeof syncEnabled === 'number' ? Boolean(syncEnabled) : syncEnabled ?? null,
+      lastMessageId: row.last_message_id ?? null,
+      lastMessageDate: row.last_message_date ?? null,
+      oldestMessageId: row.oldest_message_id ?? null,
+      oldestMessageDate: row.oldest_message_date ?? null,
+      about: row.about ?? null,
+      metadataUpdatedAt: row.metadata_updated_at ?? null,
+      createdAt: row.created_at ?? null,
+      updatedAt: row.updated_at ?? null,
+    };
+  }
+
   async refreshChannelMetadata(options = {}) {
     const limit = options.limit && options.limit > 0 ? Number(options.limit) : 20;
     const force = Boolean(options.force);
@@ -1619,11 +1668,18 @@ export default class MessageSyncService {
         row.peer_type,
       );
 
-      if (metadata.peerTitle || metadata.peerType || metadata.username) {
+      const nextChatType = metadata.chatType ?? row.chat_type ?? null;
+      const nextIsForum = typeof metadata.isForum === 'boolean'
+        ? (metadata.isForum ? 1 : 0)
+        : row.is_forum ?? null;
+
+      if (metadata.peerTitle || metadata.peerType || metadata.username || metadata.chatType || typeof metadata.isForum === 'boolean') {
         this.upsertChannelStmt.get({
           channel_id: row.channel_id,
           peer_title: metadata.peerTitle ?? row.peer_title ?? null,
           peer_type: metadata.peerType ?? row.peer_type ?? null,
+          chat_type: nextChatType,
+          is_forum: typeof nextIsForum === 'number' ? nextIsForum : null,
           username: metadata.username ?? row.username ?? null,
         });
       }
@@ -1637,6 +1693,8 @@ export default class MessageSyncService {
         channelId: row.channel_id,
         peerTitle: metadata.peerTitle ?? row.peer_title ?? null,
         peerType: metadata.peerType ?? row.peer_type ?? null,
+        chatType: nextChatType,
+        isForum: typeof nextIsForum === 'number' ? Boolean(nextIsForum) : nextIsForum ?? null,
         username: metadata.username ?? row.username ?? null,
         about: metadata.about ?? null,
         metadataUpdatedAt: new Date().toISOString(),
@@ -3179,6 +3237,8 @@ export default class MessageSyncService {
         channel_id: normalizedId,
         peer_title: peerTitle ?? null,
         peer_type: peerType ?? null,
+        chat_type: null,
+        is_forum: null,
         username: channel.username ?? null,
       });
     }

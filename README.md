@@ -97,9 +97,12 @@ The CLI lives in `cli.js` and is useful for local workflows (auth, sync, doctor,
 node cli.js auth
 node cli.js sync --follow
 node cli.js doctor
+node cli.js channels list --limit 10
+node cli.js messages search "course" --chat -1001234567890 --source archive
 node cli.js send text --to @channel --message "hello"
 node cli.js media download --chat -1001234567890 --id 42
 node cli.js topics list --chat -1001234567890 --limit 20
+node cli.js tags set --chat -1001234567890 --tags ai,news
 node cli.js contacts search "alex"
 node cli.js groups list --query "Nha Trang"
 ```

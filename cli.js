@@ -24,11 +24,24 @@ function printUsage() {
     `  auth logout\n` +
     `  sync [--once|--follow] [--idle-exit 30s]\n` +
     `  doctor [--connect]\n` +
+    `  channels list [--query TEXT] [--limit N]\n` +
+    `  channels show --chat <id|username>\n` +
+    `  channels sync --chat <id|username> --enable|--disable\n` +
+    `  messages list [--chat <id|username>] [--topic <id>] [--source archive|live|both] [--after ISO] [--before ISO] [--limit N]\n` +
+    `  messages search <query> [--chat <id|username>] [--topic <id>] [--source archive|live|both] [--after ISO] [--before ISO] [--tag TAG] [--regex REGEX] [--limit N]\n` +
+    `  messages show --chat <id|username> --id <msgId> [--source archive|live|both]\n` +
+    `  messages context --chat <id|username> --id <msgId> [--before N] [--after N] [--source archive|live|both]\n` +
     `  send text --to <id|username> --message "..." [--topic <id>]\n` +
     `  send file --to <id|username> --file PATH [--caption "..."] [--filename NAME] [--topic <id>]\n` +
     `  media download --chat <id|username> --id <msgId> [--output PATH]\n` +
     `  topics list --chat <id|username> [--limit N]\n` +
     `  topics search --chat <id|username> --query TEXT [--limit N]\n` +
+    `  tags set --chat <id|username> --tags tag1,tag2 [--source manual]\n` +
+    `  tags list --chat <id|username> [--source manual]\n` +
+    `  tags search --tag TAG [--source manual] [--limit N]\n` +
+    `  tags auto [--chat <id|username>] [--limit N] [--source auto] [--no-refresh-metadata]\n` +
+    `  metadata get --chat <id|username>\n` +
+    `  metadata refresh [--chat <id|username>] [--limit N] [--force] [--only-missing]\n` +
     `  contacts search <query> [--limit N]\n` +
     `  contacts show --user <id>\n` +
     `  contacts alias set --user <id> --alias "Name"\n` +
@@ -163,6 +176,106 @@ function parsePositiveInt(value, label) {
     throw new Error(`${label} must be a positive number`);
   }
   return parsed;
+}
+
+function parseNonNegativeInt(value, label) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+  return parsed;
+}
+
+function parseListValues(value) {
+  const raw = Array.isArray(value) ? value : (value ? [value] : []);
+  return raw
+    .flatMap((entry) => String(entry).split(','))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function resolveSource(source) {
+  const resolved = source ? String(source).toLowerCase() : 'archive';
+  if (!['archive', 'live', 'both'].includes(resolved)) {
+    throw new Error(`Invalid source: ${source}`);
+  }
+  return resolved;
+}
+
+function parseDateMs(value, label) {
+  if (!value) {
+    return null;
+  }
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
+  return ts;
+}
+
+function filterLiveMessagesByDate(messages, fromDate, toDate) {
+  const fromMs = parseDateMs(fromDate, 'after');
+  const toMs = parseDateMs(toDate, 'before');
+  if (!fromMs && !toMs) {
+    return messages;
+  }
+  return messages.filter((message) => {
+    const ts = typeof message.date === 'number' ? message.date * 1000 : null;
+    if (!ts) {
+      return false;
+    }
+    if (fromMs && ts < fromMs) {
+      return false;
+    }
+    if (toMs && ts > toMs) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function formatLiveMessage(message, context) {
+  const dateIso = message.date ? new Date(message.date * 1000).toISOString() : null;
+  return {
+    channelId: context.channelId ?? message.peer_id ?? null,
+    peerTitle: context.peerTitle ?? null,
+    username: context.username ?? null,
+    messageId: message.id,
+    date: dateIso,
+    fromId: message.from_id ?? null,
+    fromUsername: message.from_username ?? null,
+    fromDisplayName: message.from_display_name ?? null,
+    fromPeerType: message.from_peer_type ?? null,
+    fromIsBot: typeof message.from_is_bot === 'boolean' ? message.from_is_bot : null,
+    text: message.text ?? message.message ?? '',
+    media: message.media ?? null,
+    topicId: message.topic_id ?? null,
+  };
+}
+
+function messageDateMs(message) {
+  const ts = Date.parse(message.date ?? '');
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function mergeMessageSets(sets, limit) {
+  const map = new Map();
+  for (const list of sets) {
+    for (const message of list) {
+      const channelId = message.channelId ?? '';
+      const messageId = message.messageId ?? message.id;
+      const key = `${String(channelId)}:${String(messageId)}`;
+      if (!map.has(key) || message.source === 'live') {
+        map.set(key, message);
+      }
+    }
+  }
+  const merged = Array.from(map.values());
+  merged.sort((a, b) => messageDateMs(b) - messageDateMs(a));
+  return limit && limit > 0 ? merged.slice(0, limit) : merged;
 }
 
 function normalizeInviteCode(value) {
@@ -420,6 +533,500 @@ async function runDoctor(globalFlags, args) {
   }
 }
 
+async function runChannels(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('channels requires a subcommand');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (mode === 'list') {
+      const { flags } = parseFlags(rest, {
+        query: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 50;
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const dialogs = flags.query
+        ? await telegramClient.searchDialogs(flags.query, limit)
+        : await telegramClient.listDialogs(limit);
+
+      if (globalFlags.json) {
+        writeJson(dialogs);
+      } else {
+        for (const dialog of dialogs) {
+          const label = dialog.title || dialog.username || dialog.id;
+          console.log(`${label} (${dialog.id})`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'show') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+
+      let channel = messageSyncService.getChannel(flags.chat);
+      if (!channel) {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const meta = await telegramClient.getPeerMetadata(flags.chat);
+        channel = {
+          channelId: String(flags.chat),
+          peerTitle: meta?.peerTitle ?? null,
+          peerType: meta?.peerType ?? null,
+          chatType: meta?.chatType ?? null,
+          isForum: meta?.isForum ?? null,
+          username: meta?.username ?? null,
+          syncEnabled: null,
+          lastMessageId: null,
+          lastMessageDate: null,
+          oldestMessageId: null,
+          oldestMessageDate: null,
+          about: meta?.about ?? null,
+          metadataUpdatedAt: null,
+          createdAt: null,
+          updatedAt: null,
+          source: 'live',
+        };
+      }
+
+      if (globalFlags.json) {
+        writeJson(channel);
+      } else {
+        console.log(JSON.stringify(channel, null, 2));
+      }
+      return;
+    }
+
+    if (mode === 'sync') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        enable: { type: 'boolean' },
+        disable: { type: 'boolean' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (flags.enable && flags.disable) {
+        throw new Error('Use either --enable or --disable');
+      }
+      if (!flags.enable && !flags.disable) {
+        throw new Error('--enable or --disable is required');
+      }
+      const result = messageSyncService.setChannelSync(flags.chat, Boolean(flags.enable));
+      if (globalFlags.json) {
+        writeJson({
+          channelId: result.channel_id,
+          syncEnabled: Boolean(result.sync_enabled),
+        });
+      } else {
+        console.log(`Sync ${result.sync_enabled ? 'enabled' : 'disabled'} for ${result.channel_id}`);
+      }
+      return;
+    }
+
+    throw new Error(`Unknown channels subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runMessages(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('messages requires a subcommand: list | search | show | context');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  const resolveLiveMetadata = async (channelId, fallback = {}) => {
+    const meta = messageSyncService.getChannelMetadata(channelId);
+    let peerTitle = meta?.peerTitle ?? fallback.peerTitle ?? null;
+    let username = meta?.username ?? fallback.username ?? null;
+    if (!peerTitle || !username) {
+      const live = await telegramClient.getPeerMetadata(channelId);
+      peerTitle = peerTitle ?? live?.peerTitle ?? null;
+      username = username ?? live?.username ?? null;
+    }
+    return { peerTitle, username };
+  };
+
+  try {
+    if (mode === 'list') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string', multiple: true },
+        topic: { type: 'string' },
+        source: { type: 'string' },
+        after: { type: 'string' },
+        before: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      const resolvedSource = resolveSource(flags.source);
+      const channelIds = parseListValues(flags.chat);
+      const topicId = parsePositiveInt(flags.topic, '--topic');
+      const finalLimit = parsePositiveInt(flags.limit, '--limit') ?? 50;
+      const sets = [];
+
+      if (resolvedSource === 'archive' || resolvedSource === 'both') {
+        const archived = messageSyncService.listArchivedMessages({
+          channelIds: channelIds.length ? channelIds : null,
+          topicId,
+          fromDate: flags.after,
+          toDate: flags.before,
+          limit: finalLimit,
+        });
+        sets.push(archived.map((message) => ({ ...message, source: 'archive' })));
+      }
+
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        if (!channelIds.length) {
+          throw new Error('--chat is required for live source.');
+        }
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+
+        const liveResults = [];
+        for (const id of channelIds) {
+          let peerTitle = null;
+          let username = null;
+          let liveMessages = [];
+
+          if (topicId) {
+            const results = await telegramClient.getTopicMessages(id, topicId, finalLimit);
+            liveMessages = results.messages;
+          } else {
+            const results = await telegramClient.getMessagesByChannelId(id, finalLimit);
+            liveMessages = results.messages;
+            peerTitle = results.peerTitle ?? null;
+          }
+
+          const meta = await resolveLiveMetadata(id, { peerTitle, username });
+          peerTitle = meta.peerTitle;
+          username = meta.username;
+
+          const filtered = filterLiveMessagesByDate(liveMessages, flags.after, flags.before);
+          const formatted = filtered.map((message) => ({
+            ...formatLiveMessage(message, { channelId: String(id), peerTitle, username }),
+            source: 'live',
+          }));
+          liveResults.push(...formatted);
+        }
+        sets.push(liveResults);
+      }
+
+      const messages = resolvedSource === 'both'
+        ? mergeMessageSets(sets, finalLimit)
+        : (sets[0] ?? []);
+
+      if (globalFlags.json) {
+        writeJson({ source: resolvedSource, returned: messages.length, messages });
+      } else {
+        for (const message of messages) {
+          const label = message.peerTitle || message.channelId || 'unknown';
+          const text = (message.text || '').replace(/\s+/g, ' ').trim();
+          const prefix = resolvedSource === 'both' ? `[${message.source}] ` : '';
+          console.log(`${prefix}${message.date ?? ''} ${label} #${message.messageId}: ${text}`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'search') {
+      const { flags, rest: queryParts } = parseFlags(rest, {
+        chat: { type: 'string', multiple: true },
+        topic: { type: 'string' },
+        source: { type: 'string' },
+        after: { type: 'string' },
+        before: { type: 'string' },
+        limit: { type: 'string' },
+        regex: { type: 'string' },
+        tag: { type: 'string', multiple: true },
+        tags: { type: 'string' },
+        query: { type: 'string' },
+        'case-sensitive': { type: 'boolean' },
+      });
+      const query = flags.query || queryParts.join(' ').trim();
+      const resolvedSource = resolveSource(flags.source);
+      const channelIds = parseListValues(flags.chat);
+      const tagList = [
+        ...parseListValues(flags.tag),
+        ...parseListValues(flags.tags),
+      ];
+      const topicId = parsePositiveInt(flags.topic, '--topic');
+      const finalLimit = parsePositiveInt(flags.limit, '--limit') ?? 100;
+      const caseInsensitive = !flags['case-sensitive'];
+
+      if (!query && !flags.regex && tagList.length === 0) {
+        throw new Error('Provide query, regex, or tag for messages search.');
+      }
+
+      const sets = [];
+
+      if (resolvedSource === 'archive' || resolvedSource === 'both') {
+        const archived = messageSyncService.searchArchiveMessages({
+          query,
+          regex: flags.regex,
+          tags: tagList.length ? tagList : null,
+          channelIds: channelIds.length ? channelIds : null,
+          topicId,
+          fromDate: flags.after,
+          toDate: flags.before,
+          limit: finalLimit,
+          caseInsensitive,
+        });
+        sets.push(archived.map((message) => ({ ...message, source: 'archive' })));
+      }
+
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        let liveChannelIds = channelIds;
+        if (!liveChannelIds.length && tagList.length) {
+          const tagged = new Map();
+          for (const tag of tagList) {
+            const channels = messageSyncService.listTaggedChannels(tag, { limit: 200 });
+            for (const channel of channels) {
+              tagged.set(channel.channelId, channel);
+            }
+          }
+          liveChannelIds = Array.from(tagged.keys());
+        }
+
+        if (!liveChannelIds.length) {
+          throw new Error('--chat is required for live search.');
+        }
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+
+        let liveRegex = null;
+        if (flags.regex) {
+          try {
+            liveRegex = new RegExp(flags.regex, caseInsensitive ? 'i' : '');
+          } catch (error) {
+            throw new Error(`Invalid regex: ${error.message}`);
+          }
+        }
+
+        const liveResults = [];
+        for (const id of liveChannelIds) {
+          let peerTitle = null;
+          let username = null;
+          let liveMessages = [];
+
+          if (query) {
+            const results = await telegramClient.searchChannelMessages(id, {
+              query,
+              limit: finalLimit,
+              topicId,
+            });
+            liveMessages = results.messages;
+            peerTitle = results.peerTitle ?? null;
+          } else if (topicId) {
+            const results = await telegramClient.getTopicMessages(id, topicId, finalLimit);
+            liveMessages = results.messages;
+          } else {
+            const results = await telegramClient.getMessagesByChannelId(id, finalLimit);
+            liveMessages = results.messages;
+            peerTitle = results.peerTitle ?? null;
+          }
+
+          const meta = await resolveLiveMetadata(id, { peerTitle, username });
+          peerTitle = meta.peerTitle;
+          username = meta.username;
+
+          let filtered = filterLiveMessagesByDate(liveMessages, flags.after, flags.before);
+          if (liveRegex) {
+            filtered = filtered.filter((message) =>
+              liveRegex.test(message.text ?? message.message ?? ''),
+            );
+          }
+
+          const formatted = filtered.map((message) => ({
+            ...formatLiveMessage(message, { channelId: String(id), peerTitle, username }),
+            source: 'live',
+          }));
+          liveResults.push(...formatted);
+        }
+
+        sets.push(liveResults);
+      }
+
+      const messages = resolvedSource === 'both'
+        ? mergeMessageSets(sets, finalLimit)
+        : (sets[0] ?? []);
+
+      if (globalFlags.json) {
+        writeJson({ source: resolvedSource, returned: messages.length, messages });
+      } else {
+        for (const message of messages) {
+          const label = message.peerTitle || message.channelId || 'unknown';
+          const text = (message.text || '').replace(/\s+/g, ' ').trim();
+          const prefix = resolvedSource === 'both' ? `[${message.source}] ` : '';
+          console.log(`${prefix}${message.date ?? ''} ${label} #${message.messageId}: ${text}`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'show') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        id: { type: 'string' },
+        source: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (!flags.id) {
+        throw new Error('--id is required');
+      }
+      const messageId = parsePositiveInt(flags.id, '--id');
+      const resolvedSource = resolveSource(flags.source);
+      let message = null;
+      let resolvedFrom = null;
+
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const live = await telegramClient.getMessageById(flags.chat, messageId);
+        if (live) {
+          const meta = await resolveLiveMetadata(flags.chat);
+          message = {
+            ...formatLiveMessage(live, { channelId: String(flags.chat), ...meta }),
+            source: 'live',
+          };
+          resolvedFrom = 'live';
+        }
+      }
+
+      if (!message && (resolvedSource === 'archive' || resolvedSource === 'both')) {
+        const archived = messageSyncService.getArchivedMessage({
+          channelId: flags.chat,
+          messageId,
+        });
+        if (archived) {
+          message = { ...archived, source: 'archive' };
+          resolvedFrom = 'archive';
+        }
+      }
+
+      if (!message) {
+        throw new Error('Message not found.');
+      }
+
+      const payload = { source: resolvedFrom ?? resolvedSource, message };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(JSON.stringify(payload, null, 2));
+      }
+      return;
+    }
+
+    if (mode === 'context') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        id: { type: 'string' },
+        source: { type: 'string' },
+        before: { type: 'string' },
+        after: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (!flags.id) {
+        throw new Error('--id is required');
+      }
+      const messageId = parsePositiveInt(flags.id, '--id');
+      const resolvedSource = resolveSource(flags.source);
+      const safeBefore = parseNonNegativeInt(flags.before, '--before') ?? 20;
+      const safeAfter = parseNonNegativeInt(flags.after, '--after') ?? 20;
+      let context = null;
+      let resolvedFrom = null;
+
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const liveContext = await telegramClient.getMessageContext(flags.chat, messageId, {
+          before: safeBefore,
+          after: safeAfter,
+        });
+        if (liveContext.target) {
+          const meta = await resolveLiveMetadata(flags.chat);
+          context = {
+            target: {
+              ...formatLiveMessage(liveContext.target, { channelId: String(flags.chat), ...meta }),
+              source: 'live',
+            },
+            before: liveContext.before.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(flags.chat), ...meta }),
+              source: 'live',
+            })),
+            after: liveContext.after.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(flags.chat), ...meta }),
+              source: 'live',
+            })),
+          };
+          resolvedFrom = 'live';
+        }
+      }
+
+      if (!context && (resolvedSource === 'archive' || resolvedSource === 'both')) {
+        const archiveContext = messageSyncService.getArchivedMessageContext({
+          channelId: flags.chat,
+          messageId,
+          before: safeBefore,
+          after: safeAfter,
+        });
+        if (archiveContext.target) {
+          context = {
+            target: { ...archiveContext.target, source: 'archive' },
+            before: archiveContext.before.map((message) => ({ ...message, source: 'archive' })),
+            after: archiveContext.after.map((message) => ({ ...message, source: 'archive' })),
+          };
+          resolvedFrom = 'archive';
+        }
+      }
+
+      if (!context) {
+        throw new Error('Message not found.');
+      }
+
+      const payload = { source: resolvedFrom ?? resolvedSource, ...context };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(JSON.stringify(payload, null, 2));
+      }
+      return;
+    }
+
+    throw new Error(`Unknown messages subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
 async function runSend(globalFlags, args) {
   const [mode, ...rest] = args;
   if (!mode) {
@@ -610,6 +1217,202 @@ async function runTopics(globalFlags, args) {
     }
 
     throw new Error(`Unknown topics subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runTags(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('tags requires a subcommand');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (mode === 'set') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        tags: { type: 'string' },
+        tag: { type: 'string', multiple: true },
+        source: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      const hasTagFlag = flags.tags !== undefined || flags.tag !== undefined;
+      const tagValues = [
+        ...parseListValues(flags.tags),
+        ...parseListValues(flags.tag),
+      ];
+      if (!hasTagFlag) {
+        throw new Error('--tags or --tag is required');
+      }
+      const finalTags = messageSyncService.setChannelTags(flags.chat, tagValues, {
+        source: flags.source,
+      });
+      if (globalFlags.json) {
+        writeJson({ channelId: flags.chat, tags: finalTags });
+      } else {
+        console.log(`Tags set for ${flags.chat}: ${finalTags.join(', ')}`);
+      }
+      return;
+    }
+
+    if (mode === 'list') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        source: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      const tags = messageSyncService.listChannelTags(flags.chat, { source: flags.source });
+      if (globalFlags.json) {
+        writeJson(tags);
+      } else {
+        console.log(tags.map((tag) => tag.tag).join(', '));
+      }
+      return;
+    }
+
+    if (mode === 'search') {
+      const { flags } = parseFlags(rest, {
+        tag: { type: 'string' },
+        source: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      if (!flags.tag) {
+        throw new Error('--tag is required');
+      }
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 100;
+      const channels = messageSyncService.listTaggedChannels(flags.tag, {
+        source: flags.source,
+        limit,
+      });
+      if (globalFlags.json) {
+        writeJson(channels);
+      } else {
+        for (const channel of channels) {
+          const label = channel.peerTitle || channel.username || channel.channelId;
+          console.log(`${label} (${channel.channelId})`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'auto') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string', multiple: true },
+        limit: { type: 'string' },
+        source: { type: 'string' },
+        'no-refresh-metadata': { type: 'boolean' },
+      });
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const channelIds = parseListValues(flags.chat);
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 50;
+      const results = await messageSyncService.autoTagChannels({
+        channelIds: channelIds.length ? channelIds : null,
+        limit,
+        source: flags.source,
+        refreshMetadata: !flags['no-refresh-metadata'],
+      });
+      if (globalFlags.json) {
+        writeJson(results);
+      } else {
+        for (const entry of results) {
+          console.log(`${entry.channelId}: ${entry.tags.map((tag) => tag.tag).join(', ')}`);
+        }
+      }
+      return;
+    }
+
+    throw new Error(`Unknown tags subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runMetadata(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('metadata requires a subcommand');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (mode === 'get') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      let metadata = messageSyncService.getChannelMetadata(flags.chat);
+      if (!metadata) {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const live = await telegramClient.getPeerMetadata(flags.chat);
+        metadata = {
+          channelId: String(flags.chat),
+          peerTitle: live?.peerTitle ?? null,
+          peerType: live?.peerType ?? null,
+          chatType: live?.chatType ?? null,
+          isForum: live?.isForum ?? null,
+          username: live?.username ?? null,
+          about: live?.about ?? null,
+          metadataUpdatedAt: null,
+          source: 'live',
+        };
+      }
+      if (globalFlags.json) {
+        writeJson(metadata);
+      } else {
+        console.log(JSON.stringify(metadata, null, 2));
+      }
+      return;
+    }
+
+    if (mode === 'refresh') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string', multiple: true },
+        limit: { type: 'string' },
+        force: { type: 'boolean' },
+        'only-missing': { type: 'boolean' },
+      });
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const channelIds = parseListValues(flags.chat);
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 20;
+      const results = await messageSyncService.refreshChannelMetadata({
+        channelIds: channelIds.length ? channelIds : null,
+        limit,
+        force: Boolean(flags.force),
+        onlyMissing: Boolean(flags['only-missing']),
+      });
+      if (globalFlags.json) {
+        writeJson(results);
+      } else {
+        console.log(JSON.stringify(results, null, 2));
+      }
+      return;
+    }
+
+    throw new Error(`Unknown metadata subcommand: ${mode}`);
   } finally {
     await messageSyncService.shutdown();
     await telegramClient.destroy();
@@ -1002,6 +1805,14 @@ async function main() {
       await runDoctor(globalFlags, args);
       return;
     }
+    if (command === 'channels') {
+      await runChannels(globalFlags, args);
+      return;
+    }
+    if (command === 'messages') {
+      await runMessages(globalFlags, args);
+      return;
+    }
     if (command === 'send') {
       await runSend(globalFlags, args);
       return;
@@ -1012,6 +1823,14 @@ async function main() {
     }
     if (command === 'topics') {
       await runTopics(globalFlags, args);
+      return;
+    }
+    if (command === 'tags') {
+      await runTags(globalFlags, args);
+      return;
+    }
+    if (command === 'metadata') {
+      await runMetadata(globalFlags, args);
       return;
     }
     if (command === 'contacts') {
