@@ -195,17 +195,17 @@ const scheduleMessageSyncSchema = {
     .describe("Earliest ISO-8601 timestamp to backfill (optional)"),
 };
 
-const listChannelTopicsSchema = {
+const topicsListSchema = {
   channelId: z
     .union([
       z.number({ invalid_type_error: "channelId must be a number" }),
       z.string({ invalid_type_error: "channelId must be a string" }).min(1),
     ])
-    .describe("Numeric channel ID or username"),
+  .describe("Numeric channel ID or username"),
   limit: z.number().int().positive().optional().describe("Maximum number of topics to return (default: 100)"),
 };
 
-const searchChannelTopicsSchema = {
+const topicsSearchSchema = {
   channelId: z
     .union([
       z.number({ invalid_type_error: "channelId must be a number" }),
@@ -227,6 +227,11 @@ const messageSourceSchema = z
 const channelIdSchema = z.union([
   z.number({ invalid_type_error: "channelId must be a number" }),
   z.string({ invalid_type_error: "channelId must be a string" }).min(1),
+]);
+
+const userIdSchema = z.union([
+  z.number({ invalid_type_error: "userId must be a number" }),
+  z.string({ invalid_type_error: "userId must be a string" }).min(1),
 ]);
 
 const messagesListSchema = {
@@ -367,6 +372,99 @@ const mediaDownloadSchema = {
     .describe("Optional file path or directory for the download"),
 };
 
+const contactsSearchSchema = {
+  query: z
+    .string({ invalid_type_error: "query must be a string" })
+    .min(1)
+    .describe("Search query for contacts"),
+  limit: z.number().int().positive().optional().describe("Maximum number of contacts to return (default: 50)"),
+};
+
+const contactsGetSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+};
+
+const contactsAliasSetSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+  alias: z
+    .string({ invalid_type_error: "alias must be a string" })
+    .min(1)
+    .describe("Alias for the contact"),
+};
+
+const contactsAliasRemoveSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+};
+
+const contactsTagsAddSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+  tags: z.array(z.string().min(1)).min(1).describe("Tags to add"),
+};
+
+const contactsTagsRemoveSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+  tags: z.array(z.string().min(1)).min(1).describe("Tags to remove"),
+};
+
+const contactsNotesSetSchema = {
+  userId: userIdSchema.describe("User ID or username"),
+  notes: z
+    .string({ invalid_type_error: "notes must be a string" })
+    .describe("Notes to attach to the contact"),
+};
+
+const groupsListSchema = {
+  query: z.string().optional().describe("Optional search query for group titles"),
+  limit: z.number().int().positive().optional().describe("Maximum number of groups to return (default: 100)"),
+};
+
+const groupsInfoSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+};
+
+const groupsRenameSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+  name: z
+    .string({ invalid_type_error: "name must be a string" })
+    .min(1)
+    .describe("New group title"),
+};
+
+const groupsMembersAddSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+  userIds: z
+    .array(userIdSchema)
+    .min(1)
+    .describe("User IDs or usernames to add"),
+};
+
+const groupsMembersRemoveSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+  userIds: z
+    .array(userIdSchema)
+    .min(1)
+    .describe("User IDs or usernames to remove"),
+};
+
+const groupsInviteLinkGetSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+};
+
+const groupsInviteLinkRevokeSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+};
+
+const groupsJoinSchema = {
+  invite: z
+    .string({ invalid_type_error: "invite must be a string" })
+    .min(1)
+    .describe("Invite link or code"),
+};
+
+const groupsLeaveSchema = {
+  channelId: channelIdSchema.describe("Group ID or username"),
+};
+
 function resolveSource(source) {
   const resolved = source ? String(source).toLowerCase() : "archive";
   if (!["archive", "live", "both"].includes(resolved)) {
@@ -435,6 +533,24 @@ function formatLiveMessage(message, context) {
     text: message.text ?? message.message ?? "",
     media: message.media ?? null,
     topicId: message.topic_id ?? null,
+  };
+}
+
+function formatInviteLink(link) {
+  if (!link) {
+    return null;
+  }
+  return {
+    link: link.link ?? null,
+    isPrimary: typeof link.isPrimary === "boolean" ? link.isPrimary : null,
+    isRevoked: typeof link.isRevoked === "boolean" ? link.isRevoked : null,
+    createdAt: link.date ? link.date.toISOString() : null,
+    startDate: link.startDate ? link.startDate.toISOString() : null,
+    endDate: link.endDate ? link.endDate.toISOString() : null,
+    usageLimit: typeof link.usageLimit === "number" ? link.usageLimit : null,
+    usage: typeof link.usage === "number" ? link.usage : null,
+    approvalNeeded: typeof link.approvalNeeded === "boolean" ? link.approvalNeeded : null,
+    pendingApprovals: typeof link.pendingApprovals === "number" ? link.pendingApprovals : null,
   };
 }
 
@@ -643,9 +759,9 @@ function createServerInstance() {
   );
 
   server.tool(
-    "listChannelTopics",
+    "topicsList",
     "Lists forum topics for a supergroup.",
-    listChannelTopicsSchema,
+    topicsListSchema,
     async ({ channelId, limit }) => {
       await telegramClient.ensureLogin();
       const topics = await telegramClient.listForumTopics(channelId, { limit: limit ?? 100 });
@@ -695,9 +811,9 @@ function createServerInstance() {
   );
 
   server.tool(
-    "searchChannelTopics",
+    "topicsSearch",
     "Searches forum topics by title.",
-    searchChannelTopicsSchema,
+    topicsSearchSchema,
     async ({ channelId, query, limit }) => {
       await telegramClient.ensureLogin();
       const topics = await telegramClient.listForumTopics(channelId, { query, limit: limit ?? 100 });
@@ -1152,6 +1268,324 @@ function createServerInstance() {
           {
             type: "text",
             text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsSearch",
+    "Searches contacts/users with aliases, tags, and notes.",
+    contactsSearchSchema,
+    async ({ query, limit }) => {
+      await telegramClient.ensureLogin();
+      await messageSyncService.refreshContacts();
+      const contacts = messageSyncService.searchContacts(query, { limit });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(contacts, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsGet",
+    "Returns a contact profile from the local store.",
+    contactsGetSchema,
+    async ({ userId }) => {
+      let contact = messageSyncService.getContact(userId);
+      if (!contact) {
+        await telegramClient.ensureLogin();
+        await messageSyncService.refreshContacts();
+        contact = messageSyncService.getContact(userId);
+      }
+
+      if (!contact) {
+        throw new Error("Contact not found.");
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(contact, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsAliasSet",
+    "Sets an alias for a contact.",
+    contactsAliasSetSchema,
+    async ({ userId, alias }) => {
+      const value = messageSyncService.setContactAlias(userId, alias);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ userId, alias: value }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsAliasRemove",
+    "Removes alias for a contact.",
+    contactsAliasRemoveSchema,
+    async ({ userId }) => {
+      messageSyncService.removeContactAlias(userId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ userId, removed: true }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsTagsAdd",
+    "Adds tags to a contact.",
+    contactsTagsAddSchema,
+    async ({ userId, tags }) => {
+      const updated = messageSyncService.addContactTags(userId, tags);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ userId, tags: updated }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsTagsRemove",
+    "Removes tags from a contact.",
+    contactsTagsRemoveSchema,
+    async ({ userId, tags }) => {
+      const updated = messageSyncService.removeContactTags(userId, tags);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ userId, tags: updated }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "contactsNotesSet",
+    "Sets notes for a contact.",
+    contactsNotesSetSchema,
+    async ({ userId, notes }) => {
+      const updated = messageSyncService.setContactNotes(userId, notes);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ userId, notes: updated }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsList",
+    "Lists group chats and supergroups.",
+    groupsListSchema,
+    async ({ query, limit }) => {
+      await telegramClient.ensureLogin();
+      const groups = await telegramClient.listGroups({ query, limit });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(groups, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsInfo",
+    "Fetches group information and metadata.",
+    groupsInfoSchema,
+    async ({ channelId }) => {
+      await telegramClient.ensureLogin();
+      const info = await telegramClient.getGroupInfo(channelId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(info, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsRename",
+    "Renames a group chat or supergroup.",
+    groupsRenameSchema,
+    async ({ channelId, name }) => {
+      await telegramClient.ensureLogin();
+      await telegramClient.renameGroup(channelId, name);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, name }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsMembersAdd",
+    "Adds members to a group.",
+    groupsMembersAddSchema,
+    async ({ channelId, userIds }) => {
+      await telegramClient.ensureLogin();
+      const failed = await telegramClient.addGroupMembers(channelId, userIds);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, failed }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsMembersRemove",
+    "Removes members from a group.",
+    groupsMembersRemoveSchema,
+    async ({ channelId, userIds }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.removeGroupMembers(channelId, userIds);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, ...result }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsInviteLinkGet",
+    "Gets the primary invite link for a group.",
+    groupsInviteLinkGetSchema,
+    async ({ channelId }) => {
+      await telegramClient.ensureLogin();
+      const link = await telegramClient.getGroupInviteLink(channelId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(formatInviteLink(link), null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsInviteLinkRevoke",
+    "Revokes the primary invite link for a group.",
+    groupsInviteLinkRevokeSchema,
+    async ({ channelId }) => {
+      await telegramClient.ensureLogin();
+      const existing = await telegramClient.getGroupInviteLink(channelId);
+      const link = await telegramClient.revokeGroupInviteLink(channelId, existing);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(formatInviteLink(link), null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsJoin",
+    "Joins a group using an invite link or code.",
+    groupsJoinSchema,
+    async ({ invite }) => {
+      await telegramClient.ensureLogin();
+      const chat = await telegramClient.joinGroup(invite);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                id: chat.id?.toString?.() ?? null,
+                title: chat.displayName || chat.title || "Unknown",
+                username: chat.username ?? null,
+                chatType: typeof chat.chatType === "string" ? chat.chatType : null,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "groupsLeave",
+    "Leaves a group chat or channel.",
+    groupsLeaveSchema,
+    async ({ channelId }) => {
+      await telegramClient.ensureLogin();
+      await telegramClient.leaveGroup(channelId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, left: true }, null, 2),
           },
         ],
       };

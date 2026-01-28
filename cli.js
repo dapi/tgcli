@@ -26,7 +26,25 @@ function printUsage() {
     `  doctor [--connect]\n` +
     `  send text --to <id|username> --message "..." [--topic <id>]\n` +
     `  send file --to <id|username> --file PATH [--caption "..."] [--filename NAME] [--topic <id>]\n` +
-    `  media download --chat <id|username> --id <msgId> [--output PATH]\n`;
+    `  media download --chat <id|username> --id <msgId> [--output PATH]\n` +
+    `  topics list --chat <id|username> [--limit N]\n` +
+    `  topics search --chat <id|username> --query TEXT [--limit N]\n` +
+    `  contacts search <query> [--limit N]\n` +
+    `  contacts show --user <id>\n` +
+    `  contacts alias set --user <id> --alias "Name"\n` +
+    `  contacts alias rm --user <id>\n` +
+    `  contacts tags add --user <id> --tag TAG [--tag TAG]\n` +
+    `  contacts tags rm --user <id> --tag TAG [--tag TAG]\n` +
+    `  contacts notes set --user <id> --notes "..." \n` +
+    `  groups list [--query TEXT] [--limit N]\n` +
+    `  groups info --chat <id|username>\n` +
+    `  groups rename --chat <id|username> --name "New Name"\n` +
+    `  groups members add --chat <id|username> --user <id> [--user <id>]\n` +
+    `  groups members remove --chat <id|username> --user <id> [--user <id>]\n` +
+    `  groups invite link get --chat <id|username>\n` +
+    `  groups invite link revoke --chat <id|username>\n` +
+    `  groups join --code <invite-code>\n` +
+    `  groups leave --chat <id|username>\n`;
   console.log(text);
 }
 
@@ -124,7 +142,14 @@ function parseFlags(args, spec) {
     if (!rawValue) {
       i += 1;
     }
-    flags[key] = value;
+    if (rule.multiple) {
+      if (!flags[key]) {
+        flags[key] = [];
+      }
+      flags[key].push(value);
+    } else {
+      flags[key] = value;
+    }
   }
   return { flags, rest };
 }
@@ -138,6 +163,26 @@ function parsePositiveInt(value, label) {
     throw new Error(`${label} must be a positive number`);
   }
   return parsed;
+}
+
+function normalizeInviteCode(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('t.me/')) {
+    return `https://${trimmed}`;
+  }
+  if (trimmed.startsWith('+')) {
+    return `https://t.me/${trimmed}`;
+  }
+  if (trimmed.startsWith('@')) {
+    return trimmed;
+  }
+  return `https://t.me/joinchat/${trimmed}`;
 }
 
 function resolveStoreDir(storeOverride) {
@@ -498,6 +543,444 @@ async function runMedia(globalFlags, args) {
   }
 }
 
+async function runTopics(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('topics requires a subcommand: list | search');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      throw new Error('Not authenticated. Run `node cli.js auth` first.');
+    }
+
+    if (mode === 'list') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 100;
+      const topics = await telegramClient.listForumTopics(flags.chat, { limit });
+      messageSyncService.upsertTopics(flags.chat, topics);
+
+      if (globalFlags.json) {
+        writeJson({ total: topics.total ?? topics.length, topics });
+      } else {
+        for (const topic of topics) {
+          console.log(`#${topic.id} ${topic.title ?? ''}`.trim());
+        }
+      }
+      return;
+    }
+
+    if (mode === 'search') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        query: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (!flags.query) {
+        throw new Error('--query is required');
+      }
+      const limit = parsePositiveInt(flags.limit, '--limit') ?? 100;
+      const topics = await telegramClient.listForumTopics(flags.chat, {
+        query: flags.query,
+        limit,
+      });
+      messageSyncService.upsertTopics(flags.chat, topics);
+
+      if (globalFlags.json) {
+        writeJson({ total: topics.total ?? topics.length, topics });
+      } else {
+        for (const topic of topics) {
+          console.log(`#${topic.id} ${topic.title ?? ''}`.trim());
+        }
+      }
+      return;
+    }
+
+    throw new Error(`Unknown topics subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runContacts(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('contacts requires a subcommand');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (mode === 'search') {
+      const { flags, rest: queryParts } = parseFlags(rest, {
+        limit: { type: 'string' },
+      });
+      const query = queryParts.join(' ').trim();
+      if (!query) {
+        throw new Error('search requires a query');
+      }
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      await messageSyncService.refreshContacts();
+      const contacts = messageSyncService.searchContacts(query, {
+        limit: parsePositiveInt(flags.limit, '--limit') ?? 50,
+      });
+
+      if (globalFlags.json) {
+        writeJson(contacts);
+      } else {
+        for (const contact of contacts) {
+          const label = contact.alias || contact.displayName || contact.username || contact.userId;
+          console.log(`${label} (${contact.userId})`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'show') {
+      const { flags } = parseFlags(rest, {
+        user: { type: 'string' },
+      });
+      if (!flags.user) {
+        throw new Error('--user is required');
+      }
+      let contact = messageSyncService.getContact(flags.user);
+      if (!contact) {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        await messageSyncService.refreshContacts();
+        contact = messageSyncService.getContact(flags.user);
+      }
+      if (!contact) {
+        throw new Error('Contact not found.');
+      }
+
+      if (globalFlags.json) {
+        writeJson(contact);
+      } else {
+        console.log(JSON.stringify(contact, null, 2));
+      }
+      return;
+    }
+
+    if (mode === 'alias') {
+      const [action, ...aliasArgs] = rest;
+      if (action === 'set') {
+        const { flags } = parseFlags(aliasArgs, {
+          user: { type: 'string' },
+          alias: { type: 'string' },
+        });
+        if (!flags.user) {
+          throw new Error('--user is required');
+        }
+        if (!flags.alias) {
+          throw new Error('--alias is required');
+        }
+        const alias = messageSyncService.setContactAlias(flags.user, flags.alias);
+        if (globalFlags.json) {
+          writeJson({ userId: flags.user, alias });
+        } else {
+          console.log(`Alias set for ${flags.user}: ${alias}`);
+        }
+        return;
+      }
+      if (action === 'rm') {
+        const { flags } = parseFlags(aliasArgs, {
+          user: { type: 'string' },
+        });
+        if (!flags.user) {
+          throw new Error('--user is required');
+        }
+        messageSyncService.removeContactAlias(flags.user);
+        if (globalFlags.json) {
+          writeJson({ userId: flags.user, removed: true });
+        } else {
+          console.log(`Alias removed for ${flags.user}`);
+        }
+        return;
+      }
+      throw new Error('contacts alias requires set | rm');
+    }
+
+    if (mode === 'tags') {
+      const [action, ...tagArgs] = rest;
+      const { flags } = parseFlags(tagArgs, {
+        user: { type: 'string' },
+        tag: { type: 'string', multiple: true },
+      });
+      if (!flags.user) {
+        throw new Error('--user is required');
+      }
+      const rawTags = Array.isArray(flags.tag) ? flags.tag : [];
+      const tags = rawTags.flatMap((entry) => entry.split(',').map((item) => item.trim()).filter(Boolean));
+      if (!tags.length) {
+        throw new Error('--tag is required');
+      }
+      if (action === 'add') {
+        const updated = messageSyncService.addContactTags(flags.user, tags);
+        if (globalFlags.json) {
+          writeJson({ userId: flags.user, tags: updated });
+        } else {
+          console.log(`Tags updated for ${flags.user}: ${updated.join(', ')}`);
+        }
+        return;
+      }
+      if (action === 'rm') {
+        const updated = messageSyncService.removeContactTags(flags.user, tags);
+        if (globalFlags.json) {
+          writeJson({ userId: flags.user, tags: updated });
+        } else {
+          console.log(`Tags updated for ${flags.user}: ${updated.join(', ')}`);
+        }
+        return;
+      }
+      throw new Error('contacts tags requires add | rm');
+    }
+
+    if (mode === 'notes') {
+      const [action, ...noteArgs] = rest;
+      if (action !== 'set') {
+        throw new Error('contacts notes requires set');
+      }
+      const { flags } = parseFlags(noteArgs, {
+        user: { type: 'string' },
+        notes: { type: 'string' },
+      });
+      if (!flags.user) {
+        throw new Error('--user is required');
+      }
+      if (flags.notes === undefined) {
+        throw new Error('--notes is required');
+      }
+      const notes = messageSyncService.setContactNotes(flags.user, flags.notes);
+      if (globalFlags.json) {
+        writeJson({ userId: flags.user, notes });
+      } else {
+        console.log(`Notes updated for ${flags.user}.`);
+      }
+      return;
+    }
+
+    throw new Error(`Unknown contacts subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runGroups(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('groups requires a subcommand');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      throw new Error('Not authenticated. Run `node cli.js auth` first.');
+    }
+
+    if (mode === 'list') {
+      const { flags } = parseFlags(rest, {
+        query: { type: 'string' },
+        limit: { type: 'string' },
+      });
+      const groups = await telegramClient.listGroups({
+        query: flags.query,
+        limit: parsePositiveInt(flags.limit, '--limit') ?? 100,
+      });
+
+      if (globalFlags.json) {
+        writeJson(groups);
+      } else {
+        for (const group of groups) {
+          console.log(`${group.title} (${group.id})`);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'info') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      const info = await telegramClient.getGroupInfo(flags.chat);
+      if (globalFlags.json) {
+        writeJson(info);
+      } else {
+        console.log(JSON.stringify(info, null, 2));
+      }
+      return;
+    }
+
+    if (mode === 'rename') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+        name: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (!flags.name) {
+        throw new Error('--name is required');
+      }
+      await telegramClient.renameGroup(flags.chat, flags.name);
+      if (globalFlags.json) {
+        writeJson({ channelId: flags.chat, name: flags.name });
+      } else {
+        console.log(`Group renamed: ${flags.name}`);
+      }
+      return;
+    }
+
+    if (mode === 'members') {
+      const [action, ...memberArgs] = rest;
+      const { flags } = parseFlags(memberArgs, {
+        chat: { type: 'string' },
+        user: { type: 'string', multiple: true },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      const users = Array.isArray(flags.user)
+        ? flags.user.flatMap((entry) => entry.split(',').map((item) => item.trim()).filter(Boolean))
+        : [];
+      if (!users.length) {
+        throw new Error('--user is required');
+      }
+      if (action === 'add') {
+        const failed = await telegramClient.addGroupMembers(flags.chat, users);
+        if (globalFlags.json) {
+          writeJson({ channelId: flags.chat, failed });
+        } else if (failed.length) {
+          console.log(`Some members failed: ${JSON.stringify(failed, null, 2)}`);
+        } else {
+          console.log('Members added.');
+        }
+        return;
+      }
+      if (action === 'remove') {
+        const result = await telegramClient.removeGroupMembers(flags.chat, users);
+        if (globalFlags.json) {
+          writeJson({ channelId: flags.chat, ...result });
+        } else {
+          console.log(`Removed: ${result.removed.join(', ')}`);
+          if (result.failed.length) {
+            console.log(`Failed: ${JSON.stringify(result.failed, null, 2)}`);
+          }
+        }
+        return;
+      }
+      throw new Error('groups members requires add | remove');
+    }
+
+    if (mode === 'invite') {
+      const [action, ...inviteArgs] = rest;
+      const { flags } = parseFlags(inviteArgs, {
+        chat: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      if (action === 'link') {
+        const [linkAction] = inviteArgs.filter((arg) => !arg.startsWith('--'));
+        if (linkAction === 'get') {
+          const link = await telegramClient.getGroupInviteLink(flags.chat);
+          if (globalFlags.json) {
+            writeJson({ link: link.link });
+          } else {
+            console.log(link.link);
+          }
+          return;
+        }
+        if (linkAction === 'revoke') {
+          const existing = await telegramClient.getGroupInviteLink(flags.chat);
+          const link = await telegramClient.revokeGroupInviteLink(flags.chat, existing);
+          if (globalFlags.json) {
+            writeJson({ link: link.link });
+          } else {
+            console.log(link.link);
+          }
+          return;
+        }
+      }
+      throw new Error('groups invite requires link get|revoke');
+    }
+
+    if (mode === 'join') {
+      const { flags } = parseFlags(rest, {
+        code: { type: 'string' },
+      });
+      if (!flags.code) {
+        throw new Error('--code is required');
+      }
+      const invite = normalizeInviteCode(flags.code);
+      if (!invite) {
+        throw new Error('Invalid invite code.');
+      }
+      const chat = await telegramClient.joinGroup(invite);
+      if (globalFlags.json) {
+        writeJson({
+          id: chat.id?.toString?.() ?? null,
+          title: chat.displayName || chat.title || 'Unknown',
+          username: chat.username ?? null,
+        });
+      } else {
+        console.log(`Joined: ${chat.displayName || chat.title || 'Unknown'}`);
+      }
+      return;
+    }
+
+    if (mode === 'leave') {
+      const { flags } = parseFlags(rest, {
+        chat: { type: 'string' },
+      });
+      if (!flags.chat) {
+        throw new Error('--chat is required');
+      }
+      await telegramClient.leaveGroup(flags.chat);
+      if (globalFlags.json) {
+        writeJson({ channelId: flags.chat, left: true });
+      } else {
+        console.log(`Left ${flags.chat}`);
+      }
+      return;
+    }
+
+    throw new Error(`Unknown groups subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
 async function main() {
   try {
     const { flags: globalFlags, rest } = parseGlobalFlags(process.argv.slice(2));
@@ -525,6 +1008,18 @@ async function main() {
     }
     if (command === 'media') {
       await runMedia(globalFlags, args);
+      return;
+    }
+    if (command === 'topics') {
+      await runTopics(globalFlags, args);
+      return;
+    }
+    if (command === 'contacts') {
+      await runContacts(globalFlags, args);
+      return;
+    }
+    if (command === 'groups') {
+      await runGroups(globalFlags, args);
       return;
     }
 

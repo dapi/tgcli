@@ -167,3 +167,40 @@ This document defines the consolidated MCP tool surface. The goal is fewer tools
 ### contactsNotesSet
 - Params: userId (required), notes (string)
 - Output: { userId, notes }.
+
+## Groups
+### groupsList
+- Params: query? (optional), limit? (default 100)
+- Output: list of groups.
+
+### groupsInfo
+- Params: channelId (required)
+- Output: group metadata and membership info.
+
+### groupsRename
+- Params: channelId (required), name (required)
+- Output: { channelId, name }.
+
+### groupsMembersAdd
+- Params: channelId (required), userIds (array, required)
+- Output: { channelId, failed }.
+
+### groupsMembersRemove
+- Params: channelId (required), userIds (array, required)
+- Output: { channelId, removed, failed }.
+
+### groupsInviteLinkGet
+- Params: channelId (required)
+- Output: invite link metadata.
+
+### groupsInviteLinkRevoke
+- Params: channelId (required)
+- Output: invite link metadata.
+
+### groupsJoin
+- Params: invite (required)
+- Output: group summary.
+
+### groupsLeave
+- Params: channelId (required)
+- Output: { channelId, left: true }.

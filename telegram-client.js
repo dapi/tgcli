@@ -47,6 +47,20 @@ function normalizePeerType(peer) {
   return 'chat';
 }
 
+function isGroupPeer(peer) {
+  if (!peer) return false;
+  if (typeof peer.isGroup === 'boolean') {
+    return peer.isGroup;
+  }
+  if (peer.type === 'chat') {
+    return true;
+  }
+  if (peer.type === 'channel' && typeof peer.chatType === 'string') {
+    return peer.chatType !== 'channel';
+  }
+  return false;
+}
+
 function extractTopicId(message) {
   if (!message) return null;
   if (typeof message.replyToMessage?.threadId === 'number') {
@@ -378,11 +392,17 @@ class TelegramClient {
 
       const id = peer.id.toString();
       const username = 'username' in peer ? peer.username ?? null : null;
+      const chatType = typeof peer.chatType === 'string' ? peer.chatType : null;
+      const isForum = typeof peer.isForum === 'boolean' ? peer.isForum : null;
+      const isGroup = typeof peer.isGroup === 'boolean' ? peer.isGroup : null;
       results.push({
         id,
         type: normalizePeerType(peer),
         title: peer.displayName || 'Unknown',
         username,
+        chatType,
+        isForum,
+        isGroup,
       });
 
       if (results.length >= effectiveLimit) {
@@ -410,11 +430,17 @@ class TelegramClient {
       const username = ('username' in peer && peer.username ? peer.username : '').toLowerCase();
 
       if (title.includes(query) || username.includes(query)) {
+        const chatType = typeof peer.chatType === 'string' ? peer.chatType : null;
+        const isForum = typeof peer.isForum === 'boolean' ? peer.isForum : null;
+        const isGroup = typeof peer.isGroup === 'boolean' ? peer.isGroup : null;
         results.push({
           id: peer.id.toString(),
           type: normalizePeerType(peer),
           title: peer.displayName || 'Unknown',
           username: 'username' in peer ? peer.username ?? null : null,
+          chatType,
+          isForum,
+          isGroup,
         });
       }
 
@@ -634,6 +660,139 @@ class TelegramClient {
     };
   }
 
+  async listContacts() {
+    await this.ensureLogin();
+    return this.client.getContacts();
+  }
+
+  async getUserProfile(userId) {
+    await this.ensureLogin();
+    return this.client.getUser(userId);
+  }
+
+  async listGroups(options = {}) {
+    await this.ensureLogin();
+    const query = typeof options.query === 'string' ? options.query.trim().toLowerCase() : '';
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 100;
+    const results = [];
+
+    for await (const dialog of this.client.iterDialogs({})) {
+      const peer = dialog.peer;
+      if (!peer || !isGroupPeer(peer)) {
+        continue;
+      }
+      const title = peer.displayName || 'Unknown';
+      const username = 'username' in peer ? peer.username ?? null : null;
+      const haystack = `${title} ${username ?? ''}`.toLowerCase();
+      if (query && !haystack.includes(query)) {
+        continue;
+      }
+
+      results.push({
+        id: peer.id.toString(),
+        title,
+        username,
+        chatType: typeof peer.chatType === 'string' ? peer.chatType : null,
+        isForum: typeof peer.isForum === 'boolean' ? peer.isForum : null,
+        membersCount: peer.membersCount ?? null,
+      });
+
+      if (results.length >= limit) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  async getGroupInfo(channelId) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    const chat = await this.client.getChat(peerRef);
+    const full = await this.client.getFullChat(peerRef).catch(() => null);
+    return {
+      id: chat.id?.toString?.() ?? String(channelId),
+      title: chat.displayName || chat.title || 'Unknown',
+      username: chat.username ?? null,
+      chatType: typeof chat.chatType === 'string' ? chat.chatType : null,
+      isForum: typeof chat.isForum === 'boolean' ? chat.isForum : null,
+      isMember: typeof chat.isMember === 'boolean' ? chat.isMember : null,
+      isAdmin: typeof chat.isAdmin === 'boolean' ? chat.isAdmin : null,
+      isCreator: typeof chat.isCreator === 'boolean' ? chat.isCreator : null,
+      membersCount: full?.membersCount ?? chat.membersCount ?? null,
+      about: full?.bio ?? null,
+    };
+  }
+
+  async renameGroup(channelId, title) {
+    await this.ensureLogin();
+    const value = typeof title === 'string' ? title.trim() : '';
+    if (!value) {
+      throw new Error('Group title must be a non-empty string.');
+    }
+    const peerRef = normalizeChannelId(channelId);
+    await this.client.setChatTitle(peerRef, value);
+    return true;
+  }
+
+  async addGroupMembers(channelId, userIds) {
+    await this.ensureLogin();
+    const users = Array.isArray(userIds) ? userIds : [userIds];
+    if (!users.length) {
+      throw new Error('userIds must include at least one entry.');
+    }
+    const peerRef = normalizeChannelId(channelId);
+    const failed = await this.client.addChatMembers(peerRef, users);
+    return failed.map((entry) => ({
+      userId: entry.userId?.toString?.() ?? null,
+      error: entry.error ?? null,
+    }));
+  }
+
+  async removeGroupMembers(channelId, userIds) {
+    await this.ensureLogin();
+    const users = Array.isArray(userIds) ? userIds : [userIds];
+    if (!users.length) {
+      throw new Error('userIds must include at least one entry.');
+    }
+    const peerRef = normalizeChannelId(channelId);
+    const removed = [];
+    const failed = [];
+    for (const userId of users) {
+      try {
+        await this.client.kickChatMember({ chatId: peerRef, userId });
+        removed.push(String(userId));
+      } catch (error) {
+        failed.push({ userId: String(userId), error: error?.message ?? String(error) });
+      }
+    }
+    return { removed, failed };
+  }
+
+  async getGroupInviteLink(channelId) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    return this.client.getPrimaryInviteLink(peerRef);
+  }
+
+  async revokeGroupInviteLink(channelId, link) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    return this.client.revokeInviteLink(peerRef, link);
+  }
+
+  async joinGroup(invite) {
+    await this.ensureLogin();
+    return this.client.joinChat(invite);
+  }
+
+  async leaveGroup(channelId) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    await this.client.leaveChat(peerRef);
+    return true;
+  }
+
   async getPeerMetadata(channelId, peerType) {
     await this.ensureLogin();
     const peerRef = normalizeChannelId(channelId);
@@ -644,6 +803,8 @@ class TelegramClient {
         peerTitle: user.displayName || 'Unknown',
         username: user.username ?? null,
         peerType: normalizePeerType(user),
+        chatType: null,
+        isForum: null,
         about: user.bio || null,
       };
     };
@@ -655,11 +816,15 @@ class TelegramClient {
     let peerTitle = null;
     let username = null;
     let resolvedType = peerType ?? null;
+    let chatType = null;
+    let isForum = null;
     try {
       const chat = await this.client.getChat(peerRef);
       peerTitle = chat.displayName || chat.title || 'Unknown';
       username = chat.username ?? null;
       resolvedType = normalizePeerType(chat);
+      chatType = typeof chat.chatType === 'string' ? chat.chatType : null;
+      isForum = typeof chat.isForum === 'boolean' ? chat.isForum : null;
     } catch (error) {
       return buildUserMetadata();
     }
@@ -676,6 +841,8 @@ class TelegramClient {
       peerTitle,
       username,
       peerType: resolvedType,
+      chatType,
+      isForum,
       about,
     };
   }
@@ -799,7 +966,8 @@ class TelegramClient {
 
   async listForumTopics(channelId, options = {}) {
     await this.ensureLogin();
-    return this.client.getForumTopics(channelId, options);
+    const peerRef = normalizeChannelId(channelId);
+    return this.client.getForumTopics(peerRef, options);
   }
 
   async getTopicMessages(channelId, topicId, limit = 50, options = {}) {

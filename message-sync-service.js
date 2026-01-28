@@ -260,6 +260,43 @@ function formatArchivedRow(row) {
   };
 }
 
+function normalizeTagsList(raw) {
+  if (!raw) {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw.filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    return raw
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function formatContactRow(row) {
+  if (!row) {
+    return null;
+  }
+  const isBot = row.is_bot;
+  const isContact = row.is_contact;
+  const tags = normalizeTagsList(row.tags);
+  return {
+    userId: row.user_id,
+    peerType: row.peer_type ?? null,
+    username: row.username ?? null,
+    displayName: row.display_name ?? null,
+    phone: row.phone ?? null,
+    isContact: typeof isContact === 'number' ? Boolean(isContact) : isContact ?? null,
+    isBot: typeof isBot === 'number' ? Boolean(isBot) : isBot ?? null,
+    alias: row.alias ?? null,
+    notes: row.notes ?? null,
+    tags,
+  };
+}
+
 function extractLinksFromText(text) {
   if (!text || typeof text !== 'string') {
     return [];
@@ -525,6 +562,8 @@ export default class MessageSyncService {
         channel_id TEXT PRIMARY KEY,
         peer_title TEXT,
         peer_type TEXT,
+        chat_type TEXT,
+        is_forum INTEGER,
         username TEXT,
         sync_enabled INTEGER NOT NULL DEFAULT 1,
         last_message_id INTEGER DEFAULT 0,
@@ -583,6 +622,8 @@ export default class MessageSyncService {
       );
     `);
 
+    this._ensureChannelColumn('chat_type', 'TEXT');
+    this._ensureChannelColumn('is_forum', 'INTEGER');
     this._ensureJobColumn('target_message_count', `INTEGER DEFAULT ${DEFAULT_TARGET_MESSAGES}`);
     this._ensureJobColumn('message_count', 'INTEGER DEFAULT 0');
     this._ensureJobColumn('cursor_message_id', 'INTEGER');
@@ -595,14 +636,54 @@ export default class MessageSyncService {
         peer_type TEXT,
         username TEXT,
         display_name TEXT,
+        phone TEXT,
+        is_contact INTEGER,
         is_bot INTEGER,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
+    this._ensureUserColumn('phone', 'TEXT');
+    this._ensureUserColumn('is_contact', 'INTEGER');
+
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS users_username_idx
       ON users (username);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS users_phone_idx
+      ON users (phone);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        user_id TEXT PRIMARY KEY,
+        alias TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS contact_tags (
+        user_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, tag)
+      );
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS contact_tags_tag_idx
+      ON contact_tags (tag);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS contact_tags_user_idx
+      ON contact_tags (user_id);
     `);
 
     this.db.exec(`
@@ -823,12 +904,14 @@ export default class MessageSyncService {
     `);
 
     this.upsertChannelStmt = this.db.prepare(`
-      INSERT INTO channels (channel_id, peer_title, peer_type, username, updated_at)
-      VALUES (@channel_id, @peer_title, @peer_type, @username, CURRENT_TIMESTAMP)
+      INSERT INTO channels (channel_id, peer_title, peer_type, chat_type, is_forum, username, updated_at)
+      VALUES (@channel_id, @peer_title, @peer_type, @chat_type, @is_forum, @username, CURRENT_TIMESTAMP)
       ON CONFLICT(channel_id) DO UPDATE SET
         peer_title = excluded.peer_title,
-        peer_type = excluded.peer_type,
-        username = excluded.username,
+        peer_type = COALESCE(excluded.peer_type, channels.peer_type),
+        chat_type = COALESCE(excluded.chat_type, channels.chat_type),
+        is_forum = COALESCE(excluded.is_forum, channels.is_forum),
+        username = COALESCE(excluded.username, channels.username),
         updated_at = CURRENT_TIMESTAMP
       RETURNING channel_id, sync_enabled;
     `);
@@ -855,14 +938,72 @@ export default class MessageSyncService {
     `);
 
     this.upsertUserStmt = this.db.prepare(`
-      INSERT INTO users (user_id, peer_type, username, display_name, is_bot, updated_at)
-      VALUES (@user_id, @peer_type, @username, @display_name, @is_bot, CURRENT_TIMESTAMP)
+      INSERT INTO users (
+        user_id,
+        peer_type,
+        username,
+        display_name,
+        phone,
+        is_contact,
+        is_bot,
+        updated_at
+      )
+      VALUES (
+        @user_id,
+        @peer_type,
+        @username,
+        @display_name,
+        @phone,
+        @is_contact,
+        @is_bot,
+        CURRENT_TIMESTAMP
+      )
       ON CONFLICT(user_id) DO UPDATE SET
         peer_type = COALESCE(excluded.peer_type, users.peer_type),
         username = COALESCE(excluded.username, users.username),
         display_name = COALESCE(excluded.display_name, users.display_name),
+        phone = COALESCE(excluded.phone, users.phone),
+        is_contact = COALESCE(excluded.is_contact, users.is_contact),
         is_bot = COALESCE(excluded.is_bot, users.is_bot),
         updated_at = CURRENT_TIMESTAMP
+    `);
+
+    this.ensureUserStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO users (user_id, peer_type, updated_at)
+      VALUES (?, 'user', CURRENT_TIMESTAMP)
+    `);
+
+    this.upsertContactAliasStmt = this.db.prepare(`
+      INSERT INTO contacts (user_id, alias, updated_at)
+      VALUES (@user_id, @alias, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        alias = excluded.alias,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    this.upsertContactNotesStmt = this.db.prepare(`
+      INSERT INTO contacts (user_id, notes, updated_at)
+      VALUES (@user_id, @notes, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        notes = excluded.notes,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    this.insertContactTagStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO contact_tags (user_id, tag, updated_at)
+      VALUES (@user_id, @tag, CURRENT_TIMESTAMP)
+    `);
+
+    this.deleteContactTagStmt = this.db.prepare(`
+      DELETE FROM contact_tags
+      WHERE user_id = ? AND tag = ?
+    `);
+
+    this.listContactTagsStmt = this.db.prepare(`
+      SELECT tag
+      FROM contact_tags
+      WHERE user_id = ?
+      ORDER BY tag ASC
     `);
 
     this.insertMessageStmt = this.db.prepare(`
@@ -1076,10 +1217,24 @@ export default class MessageSyncService {
     }
   }
 
+  _ensureChannelColumn(column, definition) {
+    const existing = this.db.prepare('PRAGMA table_info(channels)').all();
+    if (!existing.some((col) => col.name === column)) {
+      this.db.exec(`ALTER TABLE channels ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
   _ensureMessageColumn(column, definition) {
     const existing = this.db.prepare('PRAGMA table_info(messages)').all();
     if (!existing.some((col) => col.name === column)) {
       this.db.exec(`ALTER TABLE messages ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  _ensureUserColumn(column, definition) {
+    const existing = this.db.prepare('PRAGMA table_info(users)').all();
+    if (!existing.some((col) => col.name === column)) {
+      this.db.exec(`ALTER TABLE users ADD COLUMN ${column} ${definition}`);
     }
   }
 
@@ -1096,6 +1251,8 @@ export default class MessageSyncService {
           channel_id: String(dialog.id),
           peer_title: dialog.title ?? null,
           peer_type: dialog.type ?? null,
+          chat_type: dialog.chatType ?? null,
+          is_forum: typeof dialog.isForum === 'boolean' ? (dialog.isForum ? 1 : 0) : null,
           username: dialog.username ?? null,
         });
       }
@@ -1124,7 +1281,7 @@ export default class MessageSyncService {
 
   listActiveChannels() {
     return this.db.prepare(`
-      SELECT channel_id, peer_title, peer_type, username, sync_enabled,
+      SELECT channel_id, peer_title, peer_type, chat_type, is_forum, username, sync_enabled,
              last_message_id, last_message_date, oldest_message_id, oldest_message_date,
              created_at, updated_at
       FROM channels
@@ -1219,6 +1376,175 @@ export default class MessageSyncService {
     }));
   }
 
+  async refreshContacts() {
+    const contacts = await this.telegramClient.listContacts();
+    const records = [];
+    for (const contact of contacts) {
+      const record = this._buildUserRecordFromPeer(contact);
+      if (record) {
+        records.push(record);
+      }
+    }
+    if (records.length) {
+      this.upsertUsersTx(records);
+    }
+    return records.length;
+  }
+
+  setContactAlias(userId, alias) {
+    const normalizedId = String(userId);
+    const value = typeof alias === 'string' ? alias.trim() : '';
+    if (!value) {
+      throw new Error('Alias must be a non-empty string.');
+    }
+    this.ensureUserStmt.run(normalizedId);
+    this.upsertContactAliasStmt.run({
+      user_id: normalizedId,
+      alias: value,
+    });
+    return value;
+  }
+
+  removeContactAlias(userId) {
+    const normalizedId = String(userId);
+    this.ensureUserStmt.run(normalizedId);
+    this.upsertContactAliasStmt.run({
+      user_id: normalizedId,
+      alias: null,
+    });
+    return true;
+  }
+
+  setContactNotes(userId, notes) {
+    const normalizedId = String(userId);
+    const value = typeof notes === 'string' ? notes.trim() : '';
+    this.ensureUserStmt.run(normalizedId);
+    this.upsertContactNotesStmt.run({
+      user_id: normalizedId,
+      notes: value || null,
+    });
+    return value || null;
+  }
+
+  listContactTags(userId) {
+    const normalizedId = String(userId);
+    return this.listContactTagsStmt.all(normalizedId).map((row) => row.tag);
+  }
+
+  addContactTags(userId, tags) {
+    const normalizedId = String(userId);
+    this.ensureUserStmt.run(normalizedId);
+    const uniqueTags = new Set();
+    for (const tag of tags || []) {
+      const normalizedTag = normalizeTag(tag);
+      if (normalizedTag) {
+        uniqueTags.add(normalizedTag);
+      }
+    }
+    const finalTags = [...uniqueTags];
+    if (!finalTags.length) {
+      return this.listContactTags(normalizedId);
+    }
+    const tx = this.db.transaction((entries) => {
+      for (const entry of entries) {
+        this.insertContactTagStmt.run({
+          user_id: normalizedId,
+          tag: entry,
+        });
+      }
+    });
+    tx(finalTags);
+    return this.listContactTags(normalizedId);
+  }
+
+  removeContactTags(userId, tags) {
+    const normalizedId = String(userId);
+    const uniqueTags = new Set();
+    for (const tag of tags || []) {
+      const normalizedTag = normalizeTag(tag);
+      if (normalizedTag) {
+        uniqueTags.add(normalizedTag);
+      }
+    }
+    const finalTags = [...uniqueTags];
+    if (finalTags.length) {
+      const tx = this.db.transaction((entries) => {
+        for (const entry of entries) {
+          this.deleteContactTagStmt.run(normalizedId, entry);
+        }
+      });
+      tx(finalTags);
+    }
+    return this.listContactTags(normalizedId);
+  }
+
+  getContact(userId) {
+    const normalizedId = String(userId);
+    const row = this.db.prepare(`
+      SELECT
+        users.user_id,
+        users.peer_type,
+        users.username,
+        users.display_name,
+        users.phone,
+        users.is_contact,
+        users.is_bot,
+        contacts.alias,
+        contacts.notes
+      FROM users
+      LEFT JOIN contacts ON contacts.user_id = users.user_id
+      WHERE users.user_id = ?
+    `).get(normalizedId);
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      ...formatContactRow(row),
+      tags: this.listContactTags(normalizedId),
+    };
+  }
+
+  searchContacts(query, options = {}) {
+    const normalizedQuery = typeof query === 'string' ? query.trim().toLowerCase() : '';
+    if (!normalizedQuery) {
+      return [];
+    }
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 50;
+    const like = `%${normalizedQuery}%`;
+    const rows = this.db.prepare(`
+      SELECT
+        users.user_id,
+        users.peer_type,
+        users.username,
+        users.display_name,
+        users.phone,
+        users.is_contact,
+        users.is_bot,
+        contacts.alias,
+        contacts.notes,
+        GROUP_CONCAT(DISTINCT contact_tags.tag) AS tags
+      FROM users
+      LEFT JOIN contacts ON contacts.user_id = users.user_id
+      LEFT JOIN contact_tags ON contact_tags.user_id = users.user_id
+      WHERE (
+        LOWER(COALESCE(users.username, '')) LIKE ?
+        OR LOWER(COALESCE(users.display_name, '')) LIKE ?
+        OR LOWER(COALESCE(users.phone, '')) LIKE ?
+        OR LOWER(COALESCE(contacts.alias, '')) LIKE ?
+        OR LOWER(COALESCE(contacts.notes, '')) LIKE ?
+        OR LOWER(COALESCE(contact_tags.tag, '')) LIKE ?
+      )
+      AND (users.peer_type IS NULL OR users.peer_type = 'user')
+      GROUP BY users.user_id
+      ORDER BY users.display_name IS NULL, users.display_name COLLATE NOCASE
+      LIMIT ?
+    `).all(like, like, like, like, like, like, limit);
+
+    return rows.map((row) => formatContactRow(row));
+  }
+
   getChannelMetadata(channelId) {
     const normalizedId = normalizeChannelKey(channelId);
     const row = this.db.prepare(`
@@ -1226,6 +1552,8 @@ export default class MessageSyncService {
         channels.channel_id,
         channels.peer_title,
         channels.peer_type,
+        channels.chat_type,
+        channels.is_forum,
         channels.username,
         channel_metadata.about,
         channel_metadata.updated_at AS metadata_updated_at
@@ -1242,6 +1570,8 @@ export default class MessageSyncService {
       channelId: row.channel_id,
       peerTitle: row.peer_title,
       peerType: row.peer_type,
+      chatType: row.chat_type ?? null,
+      isForum: typeof row.is_forum === 'number' ? Boolean(row.is_forum) : row.is_forum ?? null,
       username: row.username,
       about: row.about ?? null,
       metadataUpdatedAt: row.metadata_updated_at ?? null,
@@ -1263,6 +1593,8 @@ export default class MessageSyncService {
           channels.channel_id,
           channels.peer_title,
           channels.peer_type,
+          channels.chat_type,
+          channels.is_forum,
           channels.username,
           channel_metadata.about,
           channel_metadata.updated_at AS metadata_updated_at
@@ -1346,19 +1678,27 @@ export default class MessageSyncService {
       let peerTitle = row.peer_title;
       let username = row.username;
       let peerType = row.peer_type;
+      let chatType = row.chat_type;
+      let isForum = row.is_forum;
       if (refreshMetadata && this._isMetadataStale(metadataUpdatedAt)) {
         const metadata = await this.telegramClient.getPeerMetadata(
           row.channel_id,
           row.peer_type,
         );
-        if (metadata.peerTitle || metadata.peerType || metadata.username) {
+        if (metadata.peerTitle || metadata.peerType || metadata.username || metadata.chatType || typeof metadata.isForum === 'boolean') {
           peerTitle = metadata.peerTitle ?? peerTitle;
           username = metadata.username ?? username;
           peerType = metadata.peerType ?? peerType;
+          chatType = metadata.chatType ?? chatType;
+          if (typeof metadata.isForum === 'boolean') {
+            isForum = metadata.isForum ? 1 : 0;
+          }
           this.upsertChannelStmt.get({
             channel_id: row.channel_id,
             peer_title: peerTitle ?? null,
             peer_type: peerType ?? null,
+            chat_type: chatType ?? null,
+            is_forum: typeof isForum === 'number' ? isForum : null,
             username: username ?? null,
           });
         }
@@ -1382,6 +1722,8 @@ export default class MessageSyncService {
         channelId: row.channel_id,
         peerTitle,
         peerType,
+        chatType: chatType ?? null,
+        isForum: typeof isForum === 'number' ? Boolean(isForum) : isForum ?? null,
         username,
         tags: tags.map((entry) => ({
           tag: entry.tag,
@@ -2447,12 +2789,18 @@ export default class MessageSyncService {
     }
     const peerType = normalizePeerType(peer);
     const isBot = typeof peer.isBot === 'boolean' ? (peer.isBot ? 1 : 0) : null;
+    const phone = typeof peer.phoneNumber === 'string' && peer.phoneNumber.trim()
+      ? peer.phoneNumber.trim()
+      : null;
+    const isContact = typeof peer.isContact === 'boolean' ? (peer.isContact ? 1 : 0) : null;
 
     return {
       user_id: peer.id.toString(),
       peer_type: peerType,
       username,
       display_name: displayName,
+      phone,
+      is_contact: isContact,
       is_bot: isBot,
     };
   }
@@ -2478,6 +2826,8 @@ export default class MessageSyncService {
       peer_type: peerType,
       username,
       display_name: displayName,
+      phone: null,
+      is_contact: null,
       is_bot: isBot,
     };
   }
@@ -2497,6 +2847,8 @@ export default class MessageSyncService {
         channels.channel_id,
         channels.peer_title,
         channels.peer_type,
+        channels.chat_type,
+        channels.is_forum,
         channels.username,
         channel_metadata.about,
         channel_metadata.updated_at AS metadata_updated_at
@@ -2558,10 +2910,14 @@ export default class MessageSyncService {
     const peerTitle = peer?.displayName ?? null;
     const peerType = normalizePeerType(peer);
     const username = peer?.username ?? null;
+    const chatType = typeof peer?.chatType === 'string' ? peer.chatType : null;
+    const isForum = typeof peer?.isForum === 'boolean' ? (peer.isForum ? 1 : 0) : null;
     return this.upsertChannelStmt.get({
       channel_id: channelId,
       peer_title: peerTitle,
       peer_type: peerType,
+      chat_type: chatType,
+      is_forum: isForum,
       username,
     });
   }
