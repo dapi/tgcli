@@ -23,7 +23,10 @@ function printUsage() {
     `  auth status\n` +
     `  auth logout\n` +
     `  sync [--once|--follow] [--idle-exit 30s]\n` +
-    `  doctor [--connect]\n`;
+    `  doctor [--connect]\n` +
+    `  send text --to <id|username> --message "..." [--topic <id>]\n` +
+    `  send file --to <id|username> --file PATH [--caption "..."] [--filename NAME] [--topic <id>]\n` +
+    `  media download --chat <id|username> --id <msgId> [--output PATH]\n`;
   console.log(text);
 }
 
@@ -124,6 +127,17 @@ function parseFlags(args, spec) {
     flags[key] = value;
   }
   return { flags, rest };
+}
+
+function parsePositiveInt(value, label) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number`);
+  }
+  return parsed;
 }
 
 function resolveStoreDir(storeOverride) {
@@ -361,6 +375,129 @@ async function runDoctor(globalFlags, args) {
   }
 }
 
+async function runSend(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('send requires a subcommand: text | file');
+  }
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      throw new Error('Not authenticated. Run `node cli.js auth` first.');
+    }
+
+    if (mode === 'text') {
+      const { flags } = parseFlags(rest, {
+        to: { type: 'string' },
+        message: { type: 'string' },
+        topic: { type: 'string' },
+      });
+      if (!flags.to) {
+        throw new Error('--to is required');
+      }
+      if (!flags.message) {
+        throw new Error('--message is required');
+      }
+      const topicId = parsePositiveInt(flags.topic, '--topic');
+      const result = await telegramClient.sendTextMessage(flags.to, flags.message, { topicId });
+      const payload = { channelId: flags.to, ...result };
+
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`Message sent (${result.messageId}).`);
+      }
+      return;
+    }
+
+    if (mode === 'file') {
+      const { flags } = parseFlags(rest, {
+        to: { type: 'string' },
+        file: { type: 'string' },
+        caption: { type: 'string' },
+        filename: { type: 'string' },
+        topic: { type: 'string' },
+      });
+      if (!flags.to) {
+        throw new Error('--to is required');
+      }
+      if (!flags.file) {
+        throw new Error('--file is required');
+      }
+      const topicId = parsePositiveInt(flags.topic, '--topic');
+      const result = await telegramClient.sendFileMessage(flags.to, flags.file, {
+        caption: flags.caption,
+        filename: flags.filename,
+        topicId,
+      });
+      const payload = { channelId: flags.to, ...result };
+
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`File sent (${result.messageId}).`);
+      }
+      return;
+    }
+
+    throw new Error(`Unknown send subcommand: ${mode}`);
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
+async function runMedia(globalFlags, args) {
+  const [mode, ...rest] = args;
+  if (!mode) {
+    throw new Error('media requires a subcommand: download');
+  }
+  if (mode !== 'download') {
+    throw new Error(`Unknown media subcommand: ${mode}`);
+  }
+
+  const { flags } = parseFlags(rest, {
+    chat: { type: 'string' },
+    id: { type: 'string' },
+    output: { type: 'string' },
+  });
+  if (!flags.chat) {
+    throw new Error('--chat is required');
+  }
+  if (!flags.id) {
+    throw new Error('--id is required');
+  }
+  const messageId = parsePositiveInt(flags.id, '--id');
+
+  const storeDir = resolveStoreDir(globalFlags.store);
+  const release = acquireStoreLock(storeDir);
+  const { telegramClient, messageSyncService } = createServices(storeDir);
+
+  try {
+    if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      throw new Error('Not authenticated. Run `node cli.js auth` first.');
+    }
+    const result = await telegramClient.downloadMessageMedia(flags.chat, messageId, {
+      outputPath: flags.output,
+    });
+
+    if (globalFlags.json) {
+      writeJson(result);
+    } else {
+      console.log(`Downloaded to ${result.path} (${result.bytes} bytes).`);
+    }
+  } finally {
+    await messageSyncService.shutdown();
+    await telegramClient.destroy();
+    release();
+  }
+}
+
 async function main() {
   try {
     const { flags: globalFlags, rest } = parseGlobalFlags(process.argv.slice(2));
@@ -380,6 +517,14 @@ async function main() {
     }
     if (command === 'doctor') {
       await runDoctor(globalFlags, args);
+      return;
+    }
+    if (command === 'send') {
+      await runSend(globalFlags, args);
+      return;
+    }
+    if (command === 'media') {
+      await runMedia(globalFlags, args);
       return;
     }
 

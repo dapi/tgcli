@@ -2,12 +2,13 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { setTimeout as delay } from 'timers/promises';
-import { Message, PeersIndex } from '@mtcute/core';
-import { normalizeChannelId } from './telegram-client.js';
+import { Message, PeersIndex, _messageMediaFromTl } from '@mtcute/core';
+import { normalizeChannelId, summarizeMedia } from './telegram-client.js';
 
 const DEFAULT_DB_PATH = './data/messages.db';
 const DEFAULT_TARGET_MESSAGES = 1000;
 const SEARCH_INDEX_VERSION = 2;
+const MEDIA_INDEX_VERSION = 1;
 const METADATA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const JOB_STATUS = {
   PENDING: 'pending',
@@ -18,6 +19,23 @@ const JOB_STATUS = {
 const URL_PATTERN = /https?:\/\/[^\s<>"')]+/giu;
 const FILE_NAME_PATTERN = /\b[\w.\-]+\.[a-z0-9]{2,7}\b/iu;
 const MAX_FILENAME_SCAN_DEPTH = 5;
+const MEDIA_COLUMNS = `
+  message_media.media_type,
+  message_media.file_id,
+  message_media.unique_file_id,
+  message_media.file_name,
+  message_media.mime_type,
+  message_media.file_size,
+  message_media.width,
+  message_media.height,
+  message_media.duration,
+  message_media.extra_json
+`;
+const MEDIA_JOIN = `
+  LEFT JOIN message_media
+    ON message_media.channel_id = messages.channel_id
+   AND message_media.message_id = messages.message_id
+`;
 
 const TAG_RULES = [
   {
@@ -200,6 +218,29 @@ function toIsoString(dateSeconds) {
   return new Date(dateSeconds * 1000).toISOString();
 }
 
+function formatMediaRow(row) {
+  if (!row) {
+    return null;
+  }
+  const hasMedia = row.media_type || row.file_id || row.unique_file_id || row.file_name;
+  if (!hasMedia) {
+    return null;
+  }
+  const extras = safeParseJson(row.extra_json);
+  return {
+    type: row.media_type ?? null,
+    fileId: row.file_id ?? null,
+    uniqueFileId: row.unique_file_id ?? null,
+    fileName: row.file_name ?? null,
+    mimeType: row.mime_type ?? null,
+    fileSize: typeof row.file_size === 'number' ? row.file_size : row.file_size ?? null,
+    width: typeof row.width === 'number' ? row.width : row.width ?? null,
+    height: typeof row.height === 'number' ? row.height : row.height ?? null,
+    duration: typeof row.duration === 'number' ? row.duration : row.duration ?? null,
+    extras: extras ?? null,
+  };
+}
+
 function formatArchivedRow(row) {
   const isBot = row.from_is_bot;
   return {
@@ -214,6 +255,7 @@ function formatArchivedRow(row) {
     fromPeerType: row.from_peer_type ?? null,
     fromIsBot: typeof isBot === 'number' ? Boolean(isBot) : isBot ?? null,
     text: row.text ?? '',
+    media: formatMediaRow(row),
     topicId: row.topic_id ?? null,
   };
 }
@@ -340,6 +382,86 @@ function safeParseJson(value) {
   }
   try {
     return JSON.parse(value);
+  } catch (error) {
+    return null;
+  }
+}
+
+function normalizeMediaText(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return null;
+}
+
+function normalizeMediaNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function buildMediaRecord(summary) {
+  if (!summary || typeof summary !== 'object') {
+    return null;
+  }
+  const mediaType = normalizeMediaText(summary.type ?? summary.media_type);
+  if (!mediaType) {
+    return null;
+  }
+  let extraJson = null;
+  if (summary.extras && typeof summary.extras === 'object') {
+    try {
+      extraJson = JSON.stringify(summary.extras);
+    } catch (error) {
+      extraJson = null;
+    }
+  } else if (typeof summary.extra_json === 'string') {
+    extraJson = summary.extra_json;
+  }
+
+  return {
+    media_type: mediaType,
+    file_id: normalizeMediaText(summary.fileId ?? summary.file_id),
+    unique_file_id: normalizeMediaText(summary.uniqueFileId ?? summary.unique_file_id),
+    file_name: normalizeMediaText(summary.fileName ?? summary.file_name),
+    mime_type: normalizeMediaText(summary.mimeType ?? summary.mime_type),
+    file_size: normalizeMediaNumber(summary.fileSize ?? summary.file_size),
+    width: normalizeMediaNumber(summary.width),
+    height: normalizeMediaNumber(summary.height),
+    duration: normalizeMediaNumber(summary.duration),
+    extra_json: extraJson,
+  };
+}
+
+function extractMediaSummary(message) {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+  if (message.media) {
+    const summary = summarizeMedia(message.media);
+    if (summary) {
+      return summary;
+    }
+  }
+  const rawMedia = message.raw?.media;
+  if (!rawMedia || typeof rawMedia !== 'object') {
+    return null;
+  }
+  try {
+    const parsed = _messageMediaFromTl(null, rawMedia);
+    return summarizeMedia(parsed);
   } catch (error) {
     return null;
   }
@@ -531,6 +653,41 @@ export default class MessageSyncService {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_media (
+        channel_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        media_type TEXT,
+        file_id TEXT,
+        unique_file_id TEXT,
+        file_name TEXT,
+        mime_type TEXT,
+        file_size INTEGER,
+        width INTEGER,
+        height INTEGER,
+        duration INTEGER,
+        extra_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel_id, message_id)
+      );
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS message_media_type_idx
+      ON message_media (media_type);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS message_media_mime_idx
+      ON message_media (mime_type);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS message_media_name_idx
+      ON message_media (file_name);
+    `);
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS topics (
         channel_id TEXT NOT NULL,
         topic_id INTEGER NOT NULL,
@@ -560,7 +717,11 @@ export default class MessageSyncService {
     const storedVersion = this.db.prepare(`
       SELECT value FROM search_meta WHERE key = 'search_index_version'
     `).get()?.value;
+    const storedMediaVersion = this.db.prepare(`
+      SELECT value FROM search_meta WHERE key = 'media_index_version'
+    `).get()?.value;
     const needsVersionRebuild = Number(storedVersion ?? 0) !== SEARCH_INDEX_VERSION;
+    const needsMediaRebuild = Number(storedMediaVersion ?? 0) !== MEDIA_INDEX_VERSION;
     const needsSearchRecreate = !searchSchema?.sql
       || !searchSchema.sql.includes("tokenize='unicode61'")
       || !searchSchema.sql.includes('links')
@@ -576,8 +737,8 @@ export default class MessageSyncService {
       `);
     }
 
-    if (needsVersionRebuild) {
-      this._backfillSearchFields();
+    if (needsVersionRebuild || needsMediaRebuild) {
+      this._backfillSearchFields({ rebuildMedia: needsMediaRebuild });
     }
 
     this.db.exec(`
@@ -782,6 +943,56 @@ export default class MessageSyncService {
       WHERE channel_id = ? AND message_id = ?
     `);
 
+    this.upsertMessageMediaStmt = this.db.prepare(`
+      INSERT INTO message_media (
+        channel_id,
+        message_id,
+        media_type,
+        file_id,
+        unique_file_id,
+        file_name,
+        mime_type,
+        file_size,
+        width,
+        height,
+        duration,
+        extra_json,
+        updated_at
+      )
+      VALUES (
+        @channel_id,
+        @message_id,
+        @media_type,
+        @file_id,
+        @unique_file_id,
+        @file_name,
+        @mime_type,
+        @file_size,
+        @width,
+        @height,
+        @duration,
+        @extra_json,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(channel_id, message_id) DO UPDATE SET
+        media_type = excluded.media_type,
+        file_id = excluded.file_id,
+        unique_file_id = excluded.unique_file_id,
+        file_name = excluded.file_name,
+        mime_type = excluded.mime_type,
+        file_size = excluded.file_size,
+        width = excluded.width,
+        height = excluded.height,
+        duration = excluded.duration,
+        extra_json = excluded.extra_json,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    this.deleteMessageMediaStmt = this.db.prepare(`
+      DELETE FROM message_media
+      WHERE channel_id = ? AND message_id = ?
+    `);
+
     this.upsertTopicStmt = this.db.prepare(`
       INSERT INTO topics (channel_id, topic_id, title, updated_at)
       VALUES (@channel_id, @topic_id, @title, CURRENT_TIMESTAMP)
@@ -803,6 +1014,7 @@ export default class MessageSyncService {
         if (result.changes > 0) {
           inserted += result.changes;
           this._replaceMessageLinks(record);
+          this._replaceMessageMedia(record);
         }
       }
       return inserted;
@@ -846,6 +1058,14 @@ export default class MessageSyncService {
         VALUES ('search_index_version', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `).run(String(SEARCH_INDEX_VERSION));
+    }
+
+    if (needsMediaRebuild) {
+      this.db.prepare(`
+        INSERT INTO search_meta (key, value)
+        VALUES ('media_index_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(String(MEDIA_INDEX_VERSION));
     }
   }
 
@@ -1475,10 +1695,12 @@ export default class MessageSyncService {
         users.username AS from_username,
         users.display_name AS from_display_name,
         users.peer_type AS from_peer_type,
-        users.is_bot AS from_is_bot
+        users.is_bot AS from_is_bot,
+        ${MEDIA_COLUMNS}
       FROM messages
       LEFT JOIN channels ON channels.channel_id = messages.channel_id
       LEFT JOIN users ON users.user_id = messages.from_id
+      ${MEDIA_JOIN}
       ${whereClause}
       ORDER BY messages.date DESC
       LIMIT ?
@@ -1502,10 +1724,12 @@ export default class MessageSyncService {
         users.username AS from_username,
         users.display_name AS from_display_name,
         users.peer_type AS from_peer_type,
-        users.is_bot AS from_is_bot
+        users.is_bot AS from_is_bot,
+        ${MEDIA_COLUMNS}
       FROM messages
       LEFT JOIN channels ON channels.channel_id = messages.channel_id
       LEFT JOIN users ON users.user_id = messages.from_id
+      ${MEDIA_JOIN}
       WHERE messages.channel_id = ? AND messages.message_id = ?
     `).get(normalizedId, Number(messageId));
 
@@ -1540,10 +1764,12 @@ export default class MessageSyncService {
             users.username AS from_username,
             users.display_name AS from_display_name,
             users.peer_type AS from_peer_type,
-            users.is_bot AS from_is_bot
+            users.is_bot AS from_is_bot,
+            ${MEDIA_COLUMNS}
           FROM messages
           LEFT JOIN channels ON channels.channel_id = messages.channel_id
           LEFT JOIN users ON users.user_id = messages.from_id
+          ${MEDIA_JOIN}
           WHERE messages.channel_id = ? AND messages.message_id < ?
           ORDER BY messages.message_id DESC
           LIMIT ?
@@ -1564,10 +1790,12 @@ export default class MessageSyncService {
             users.username AS from_username,
             users.display_name AS from_display_name,
             users.peer_type AS from_peer_type,
-            users.is_bot AS from_is_bot
+            users.is_bot AS from_is_bot,
+            ${MEDIA_COLUMNS}
           FROM messages
           LEFT JOIN channels ON channels.channel_id = messages.channel_id
           LEFT JOIN users ON users.user_id = messages.from_id
+          ${MEDIA_JOIN}
           WHERE messages.channel_id = ? AND messages.message_id > ?
           ORDER BY messages.message_id ASC
           LIMIT ?
@@ -1659,7 +1887,8 @@ export default class MessageSyncService {
         users.username AS from_username,
         users.display_name AS from_display_name,
         users.peer_type AS from_peer_type,
-        users.is_bot AS from_is_bot
+        users.is_bot AS from_is_bot,
+        ${MEDIA_COLUMNS}
     `;
 
     const rows = queryText
@@ -1670,6 +1899,7 @@ export default class MessageSyncService {
           ${joinTags}
           LEFT JOIN channels ON channels.channel_id = messages.channel_id
           LEFT JOIN users ON users.user_id = messages.from_id
+          ${MEDIA_JOIN}
           ${whereClause}
           ORDER BY messages.date DESC
           LIMIT ?
@@ -1680,6 +1910,7 @@ export default class MessageSyncService {
           ${joinTags}
           LEFT JOIN channels ON channels.channel_id = messages.channel_id
           LEFT JOIN users ON users.user_id = messages.from_id
+          ${MEDIA_JOIN}
           ${whereClause}
           ORDER BY messages.date DESC
           LIMIT ?
@@ -2037,7 +2268,24 @@ export default class MessageSyncService {
     }
   }
 
-  _backfillSearchFields() {
+  _replaceMessageMedia(record) {
+    if (!record) {
+      return;
+    }
+    const summary = buildMediaRecord(record.media_summary);
+    if (!summary) {
+      this.deleteMessageMediaStmt.run(record.channel_id, record.message_id);
+      return;
+    }
+    this.upsertMessageMediaStmt.run({
+      channel_id: record.channel_id,
+      message_id: record.message_id,
+      ...summary,
+    });
+  }
+
+  _backfillSearchFields(options = {}) {
+    const rebuildMedia = Boolean(options.rebuildMedia);
     const selectStmt = this.db.prepare(`
       SELECT id, channel_id, message_id, raw_json, text, topic_id, from_id
       FROM messages
@@ -2058,6 +2306,54 @@ export default class MessageSyncService {
       INSERT OR IGNORE INTO message_links (channel_id, message_id, url, domain)
       VALUES (?, ?, ?, ?)
     `);
+    const deleteMediaStmt = rebuildMedia ? this.db.prepare(`
+      DELETE FROM message_media
+      WHERE channel_id = ? AND message_id = ?
+    `) : null;
+    const upsertMediaStmt = rebuildMedia ? this.db.prepare(`
+      INSERT INTO message_media (
+        channel_id,
+        message_id,
+        media_type,
+        file_id,
+        unique_file_id,
+        file_name,
+        mime_type,
+        file_size,
+        width,
+        height,
+        duration,
+        extra_json,
+        updated_at
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(channel_id, message_id) DO UPDATE SET
+        media_type = excluded.media_type,
+        file_id = excluded.file_id,
+        unique_file_id = excluded.unique_file_id,
+        file_name = excluded.file_name,
+        mime_type = excluded.mime_type,
+        file_size = excluded.file_size,
+        width = excluded.width,
+        height = excluded.height,
+        duration = excluded.duration,
+        extra_json = excluded.extra_json,
+        updated_at = CURRENT_TIMESTAMP
+    `) : null;
 
     const applyBatch = this.db.transaction((rows) => {
       for (const row of rows) {
@@ -2080,6 +2376,28 @@ export default class MessageSyncService {
         for (const entry of fields.linkEntries) {
           insertLinkStmt.run(row.channel_id, row.message_id, entry.url, entry.domain);
         }
+        if (rebuildMedia) {
+          const summary = extractMediaSummary(message);
+          const mediaRecord = buildMediaRecord(summary);
+          if (mediaRecord) {
+            upsertMediaStmt.run(
+              row.channel_id,
+              row.message_id,
+              mediaRecord.media_type,
+              mediaRecord.file_id,
+              mediaRecord.unique_file_id,
+              mediaRecord.file_name,
+              mediaRecord.mime_type,
+              mediaRecord.file_size,
+              mediaRecord.width,
+              mediaRecord.height,
+              mediaRecord.duration,
+              mediaRecord.extra_json,
+            );
+          } else {
+            deleteMediaStmt.run(row.channel_id, row.message_id);
+          }
+        }
       }
     });
 
@@ -2097,6 +2415,7 @@ export default class MessageSyncService {
 
   _buildMessageRecord(channelId, message) {
     const searchFields = buildSearchFields(message);
+    const mediaSummary = extractMediaSummary(message);
     return {
       channel_id: channelId,
       message_id: message.id,
@@ -2110,6 +2429,7 @@ export default class MessageSyncService {
       topic: searchFields.topicText,
       raw_json: JSON.stringify(message),
       link_entries: searchFields.linkEntries,
+      media_summary: mediaSummary,
     };
   }
 
@@ -2282,9 +2602,11 @@ export default class MessageSyncService {
     if (isEdit) {
       this.upsertMessageStmt.run(record);
       this._replaceMessageLinks(record);
+      this._replaceMessageMedia(record);
     } else {
       this.insertMessageStmt.run(record);
       this._replaceMessageLinks(record);
+      this._replaceMessageMedia(record);
     }
 
     const messageDate = toIsoString(serialized.date);
@@ -2314,6 +2636,10 @@ export default class MessageSyncService {
         DELETE FROM message_links
         WHERE channel_id = ? AND message_id IN (${placeholders})
       `).run(channelId, ...ids);
+      this.db.prepare(`
+        DELETE FROM message_media
+        WHERE channel_id = ? AND message_id IN (${placeholders})
+      `).run(channelId, ...ids);
       return;
     }
 
@@ -2326,6 +2652,13 @@ export default class MessageSyncService {
     `).run(...ids);
     this.db.prepare(`
       DELETE FROM message_links
+      WHERE message_id IN (${placeholders})
+        AND channel_id IN (
+          SELECT channel_id FROM channels WHERE peer_type IN ('chat', 'user')
+        )
+    `).run(...ids);
+    this.db.prepare(`
+      DELETE FROM message_media
       WHERE message_id IN (${placeholders})
         AND channel_id IN (
           SELECT channel_id FROM channels WHERE peer_type IN ('chat', 'user')

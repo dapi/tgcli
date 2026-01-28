@@ -1,8 +1,26 @@
 import { TelegramClient as MtCuteClient } from '@mtcute/node';
+import { InputMedia } from '@mtcute/core';
 import EventEmitter from 'events';
 import readline from 'readline';
 import path from 'path';
 import fs from 'fs';
+
+const DEFAULT_DOWNLOAD_DIR = './data/downloads';
+const MIME_EXTENSION_MAP = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/ogg': '.ogg',
+  'audio/opus': '.opus',
+  'audio/wav': '.wav',
+  'application/pdf': '.pdf',
+  'application/zip': '.zip',
+};
 
 function sanitizeString(value) {
   return typeof value === 'string' ? value : '';
@@ -41,6 +59,169 @@ function extractTopicId(message) {
   const replyTo = raw?.replyTo;
   if (replyTo?.replyToTopId) {
     return replyTo.replyToTopId;
+  }
+  return null;
+}
+
+function normalizeMediaText(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return null;
+}
+
+function normalizeMediaNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readMediaProperty(media, prop) {
+  if (!media) {
+    return null;
+  }
+  try {
+    return media[prop];
+  } catch (error) {
+    return null;
+  }
+}
+
+function buildWebpageExtras(media) {
+  if (!media || media.type !== 'webpage' || !media.preview) {
+    return null;
+  }
+  const preview = media.preview;
+  const previewData = {
+    url: preview.url ?? null,
+    displayUrl: preview.displayUrl ?? null,
+    siteName: preview.siteName ?? null,
+    title: preview.title ?? null,
+    description: preview.description ?? null,
+    author: preview.author ?? null,
+    previewType: preview.previewType ?? null,
+  };
+  const hasPreview = Object.values(previewData).some((value) => value);
+  const extras = {};
+  if (hasPreview) {
+    extras.preview = previewData;
+  }
+  if (typeof media.displaySize === 'string') {
+    extras.displaySize = media.displaySize;
+  }
+  if (typeof media.manual === 'boolean') {
+    extras.manual = media.manual;
+  }
+  return Object.keys(extras).length ? extras : null;
+}
+
+export function summarizeMedia(media) {
+  if (!media || typeof media !== 'object') {
+    return null;
+  }
+  const type = normalizeMediaText(media.type);
+  if (!type) {
+    return null;
+  }
+
+  const summary = {
+    type,
+    fileId: normalizeMediaText(readMediaProperty(media, 'fileId') ?? media.file_id),
+    uniqueFileId: normalizeMediaText(readMediaProperty(media, 'uniqueFileId') ?? media.unique_file_id),
+    fileName: normalizeMediaText(readMediaProperty(media, 'fileName') ?? media.file_name),
+    mimeType: normalizeMediaText(readMediaProperty(media, 'mimeType') ?? media.mime_type),
+    fileSize: normalizeMediaNumber(readMediaProperty(media, 'fileSize') ?? media.file_size),
+    width: normalizeMediaNumber(readMediaProperty(media, 'width') ?? media.width),
+    height: normalizeMediaNumber(readMediaProperty(media, 'height') ?? media.height),
+    duration: normalizeMediaNumber(readMediaProperty(media, 'duration') ?? media.duration),
+    extras: null,
+  };
+
+  if (!summary.mimeType && type === 'photo') {
+    summary.mimeType = 'image/jpeg';
+  }
+
+  if (media.extras && typeof media.extras === 'object') {
+    summary.extras = media.extras;
+  } else {
+    summary.extras = buildWebpageExtras(media);
+  }
+
+  if (type === 'webpage' && media.preview) {
+    const previewMedia = media.preview.document ?? media.preview.photo ?? null;
+    if (previewMedia) {
+      const previewSummary = summarizeMedia(previewMedia);
+      if (previewSummary) {
+        summary.fileId = summary.fileId ?? previewSummary.fileId;
+        summary.uniqueFileId = summary.uniqueFileId ?? previewSummary.uniqueFileId;
+        summary.fileName = summary.fileName ?? previewSummary.fileName;
+        summary.mimeType = summary.mimeType ?? previewSummary.mimeType;
+        summary.fileSize = summary.fileSize ?? previewSummary.fileSize;
+        summary.width = summary.width ?? previewSummary.width;
+        summary.height = summary.height ?? previewSummary.height;
+        summary.duration = summary.duration ?? previewSummary.duration;
+      }
+    }
+  }
+
+  return summary;
+}
+
+function extensionFromMime(mimeType) {
+  if (!mimeType || typeof mimeType !== 'string') {
+    return null;
+  }
+  return MIME_EXTENSION_MAP[mimeType.toLowerCase()] ?? null;
+}
+
+function buildDownloadFileName(summary, messageId) {
+  const rawName = normalizeMediaText(summary?.fileName);
+  if (rawName) {
+    return path.basename(rawName);
+  }
+  const ext = extensionFromMime(summary?.mimeType) ?? '';
+  const baseType = normalizeMediaText(summary?.type) ?? 'media';
+  return `${baseType}-${messageId}${ext}`;
+}
+
+function resolveDownloadPath(outputPath, { channelId, messageId, summary }) {
+  const fileName = buildDownloadFileName(summary, messageId);
+  if (!outputPath) {
+    return path.resolve(DEFAULT_DOWNLOAD_DIR, String(channelId), fileName);
+  }
+  const resolved = path.resolve(outputPath);
+  if (fs.existsSync(resolved)) {
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) {
+      return path.join(resolved, fileName);
+    }
+  } else if (/[\\/]$/.test(outputPath)) {
+    return path.join(resolved, fileName);
+  }
+  return resolved;
+}
+
+function resolveDownloadLocation(media) {
+  if (!media || typeof media !== 'object') {
+    return null;
+  }
+  if (media.type === 'webpage' && media.preview) {
+    return media.preview.document ?? media.preview.photo ?? null;
+  }
+  if (media.location && typeof media.location === 'object') {
+    return media;
   }
   return null;
 }
@@ -380,6 +561,79 @@ class TelegramClient {
     };
   }
 
+  async sendTextMessage(channelId, text, options = {}) {
+    await this.ensureLogin();
+    const messageText = typeof text === 'string' ? text : String(text ?? '');
+    if (!messageText.trim()) {
+      throw new Error('Message text cannot be empty.');
+    }
+    const replyTo = Number.isFinite(options.replyToMessageId)
+      ? options.replyToMessageId
+      : (Number.isFinite(options.topicId) ? options.topicId : undefined);
+    const params = replyTo ? { replyTo } : undefined;
+    const peerRef = normalizeChannelId(channelId);
+    const sent = await this.client.sendText(peerRef, messageText, params);
+    return { messageId: sent.id };
+  }
+
+  async sendFileMessage(channelId, filePath, options = {}) {
+    await this.ensureLogin();
+    if (!filePath || typeof filePath !== 'string') {
+      throw new Error('filePath must be a string.');
+    }
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`File not found: ${resolved}`);
+    }
+    const uploadPath = `file:${resolved}`;
+    const caption = typeof options.caption === 'string' && options.caption.trim()
+      ? options.caption
+      : undefined;
+    const fileName = typeof options.filename === 'string' && options.filename.trim()
+      ? options.filename.trim()
+      : undefined;
+    const replyTo = Number.isFinite(options.topicId) ? options.topicId : undefined;
+    const params = replyTo ? { replyTo } : undefined;
+    const media = InputMedia.auto(uploadPath, {
+      caption,
+      fileName,
+    });
+    const peerRef = normalizeChannelId(channelId);
+    const sent = await this.client.sendMedia(peerRef, media, params);
+    return { messageId: sent.id };
+  }
+
+  async downloadMessageMedia(channelId, messageId, options = {}) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    const [message] = await this.client.getMessages(peerRef, Number(messageId));
+    if (!message) {
+      throw new Error('Message not found.');
+    }
+
+    const location = resolveDownloadLocation(message.media);
+    if (!location) {
+      throw new Error('Message has no downloadable media.');
+    }
+
+    const summary = summarizeMedia(message.media);
+    const targetPath = resolveDownloadPath(options.outputPath, {
+      channelId,
+      messageId,
+      summary,
+    });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    await this.client.downloadToFile(targetPath, location);
+    const stats = fs.statSync(targetPath);
+
+    return {
+      path: targetPath,
+      bytes: stats.size,
+      mimeType: summary?.mimeType ?? null,
+      downloadedAt: new Date().toISOString(),
+    };
+  }
+
   async getPeerMetadata(channelId, peerType) {
     await this.ensureLogin();
     const peerRef = normalizeChannelId(channelId);
@@ -468,6 +722,7 @@ class TelegramClient {
     }
     const senderPeerType = sender ? normalizePeerType(sender) : null;
     const senderIsBot = typeof sender?.isBot === 'boolean' ? sender.isBot : null;
+    const mediaSummary = summarizeMedia(message.media);
 
     return {
       id,
@@ -482,6 +737,7 @@ class TelegramClient {
       peer_type: normalizePeerType(resolvedPeer),
       peer_id: resolvedPeer?.id?.toString?.() ?? 'unknown',
       topic_id: topicId,
+      media: mediaSummary,
       raw: message.raw ?? null,
     };
   }

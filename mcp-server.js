@@ -484,6 +484,56 @@ const messagesSearchSchema = {
     .describe("Whether regex matching should be case-insensitive (default: true)"),
 };
 
+const messagesSendSchema = {
+  channelId: channelIdSchema.describe("Numeric channel ID or username"),
+  text: z
+    .string({ invalid_type_error: "text must be a string" })
+    .min(1)
+    .describe("Message text to send"),
+  topicId: z
+    .number({ invalid_type_error: "topicId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional forum topic ID to send into"),
+  replyToMessageId: z
+    .number({ invalid_type_error: "replyToMessageId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional message ID to reply to"),
+};
+
+const messagesSendFileSchema = {
+  channelId: channelIdSchema.describe("Numeric channel ID or username"),
+  filePath: z
+    .string({ invalid_type_error: "filePath must be a string" })
+    .min(1)
+    .describe("Path to a local file to upload"),
+  caption: z.string().optional().describe("Optional caption for the file"),
+  filename: z.string().optional().describe("Override file name shown in Telegram"),
+  topicId: z
+    .number({ invalid_type_error: "topicId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional forum topic ID to send into"),
+};
+
+const mediaDownloadSchema = {
+  channelId: channelIdSchema.describe("Numeric channel ID or username"),
+  messageId: z
+    .number({ invalid_type_error: "messageId must be a number" })
+    .int()
+    .positive()
+    .describe("Message ID containing media"),
+  outputPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Optional file path or directory for the download"),
+};
+
 function resolveSource(source) {
   const resolved = source ? String(source).toLowerCase() : "archive";
   if (!["archive", "live", "both"].includes(resolved)) {
@@ -550,6 +600,7 @@ function formatLiveMessage(message, context) {
     fromPeerType: message.from_peer_type ?? null,
     fromIsBot: typeof message.from_is_bot === "boolean" ? message.from_is_bot : null,
     text: message.text ?? message.message ?? "",
+    media: message.media ?? null,
     topicId: message.topic_id ?? null,
   };
 }
@@ -1305,6 +1356,72 @@ function createServerInstance() {
               null,
               2,
             ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesSend",
+    "Sends a text message to a channel or chat.",
+    messagesSendSchema,
+    async ({ channelId, text, topicId, replyToMessageId }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.sendTextMessage(channelId, text, {
+        topicId,
+        replyToMessageId,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, ...result }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesSendFile",
+    "Sends a file with an optional caption.",
+    messagesSendFileSchema,
+    async ({ channelId, filePath, caption, filename, topicId }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.sendFileMessage(channelId, filePath, {
+        caption,
+        filename,
+        topicId,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ channelId, ...result }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "mediaDownload",
+    "Downloads media from a message to a local file.",
+    mediaDownloadSchema,
+    async ({ channelId, messageId, outputPath }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.downloadMessageMedia(channelId, messageId, {
+        outputPath,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
