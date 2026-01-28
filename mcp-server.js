@@ -386,6 +386,196 @@ const getArchivedTopicMessagesSchema = {
   limit: z.number().int().positive().optional().describe("Maximum number of messages to return (default: 50)"),
 };
 
+const messageSourceSchema = z
+  .enum(["archive", "live", "both"])
+  .optional()
+  .describe("Message source (default: archive)");
+
+const channelIdSchema = z.union([
+  z.number({ invalid_type_error: "channelId must be a number" }),
+  z.string({ invalid_type_error: "channelId must be a string" }).min(1),
+]);
+
+const messagesListSchema = {
+  channelId: channelIdSchema.optional().describe("Optional numeric channel ID or username"),
+  topicId: z
+    .number({ invalid_type_error: "topicId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional forum topic ID"),
+  source: messageSourceSchema,
+  fromDate: z
+    .string({ invalid_type_error: "fromDate must be a string" })
+    .min(1)
+    .optional()
+    .describe("Earliest ISO-8601 timestamp to include (optional)"),
+  toDate: z
+    .string({ invalid_type_error: "toDate must be a string" })
+    .min(1)
+    .optional()
+    .describe("Latest ISO-8601 timestamp to include (optional)"),
+  limit: z.number().int().positive().optional().describe("Maximum number of messages to return (default: 50)"),
+};
+
+const messagesGetSchema = {
+  channelId: channelIdSchema.describe("Numeric channel ID or username"),
+  messageId: z
+    .number({ invalid_type_error: "messageId must be a number" })
+    .int()
+    .positive()
+    .describe("Message ID"),
+  source: messageSourceSchema,
+};
+
+const messagesContextSchema = {
+  channelId: channelIdSchema.describe("Numeric channel ID or username"),
+  messageId: z
+    .number({ invalid_type_error: "messageId must be a number" })
+    .int()
+    .positive()
+    .describe("Message ID"),
+  before: z
+    .number({ invalid_type_error: "before must be a number" })
+    .int()
+    .min(0)
+    .optional()
+    .describe("Number of messages to include before the target (default: 20)"),
+  after: z
+    .number({ invalid_type_error: "after must be a number" })
+    .int()
+    .min(0)
+    .optional()
+    .describe("Number of messages to include after the target (default: 20)"),
+  source: messageSourceSchema,
+};
+
+const messagesSearchSchema = {
+  query: z.string().optional().describe("Optional full-text query (archive) or search text (live)"),
+  regex: z.string().optional().describe("Optional regex filter for message text"),
+  source: messageSourceSchema,
+  channelIds: z
+    .union([channelIdSchema, z.array(channelIdSchema).min(1)])
+    .optional()
+    .describe("Channel IDs or usernames to search (optional)"),
+  channelId: channelIdSchema.optional().describe("Alias for channelIds"),
+  tags: z.array(z.string().min(1)).optional().describe("Channel tags to filter by (optional)"),
+  tag: z.string().optional().describe("Alias for tags"),
+  topicId: z
+    .number({ invalid_type_error: "topicId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional forum topic ID"),
+  fromDate: z
+    .string({ invalid_type_error: "fromDate must be a string" })
+    .min(1)
+    .optional()
+    .describe("Earliest ISO-8601 timestamp to include (optional)"),
+  toDate: z
+    .string({ invalid_type_error: "toDate must be a string" })
+    .min(1)
+    .optional()
+    .describe("Latest ISO-8601 timestamp to include (optional)"),
+  limit: z.number().int().positive().optional().describe("Maximum number of matches to return (default: 100)"),
+  caseInsensitive: z
+    .boolean({ invalid_type_error: "caseInsensitive must be a boolean" })
+    .optional()
+    .describe("Whether regex matching should be case-insensitive (default: true)"),
+};
+
+function resolveSource(source) {
+  const resolved = source ? String(source).toLowerCase() : "archive";
+  if (!["archive", "live", "both"].includes(resolved)) {
+    throw new Error(`Invalid source: ${source}`);
+  }
+  return resolved;
+}
+
+function resolveChannelIds(channelIds, channelId) {
+  const resolved = [];
+  if (Array.isArray(channelIds)) {
+    resolved.push(...channelIds);
+  } else if (channelIds) {
+    resolved.push(channelIds);
+  }
+  if (channelId) {
+    resolved.push(channelId);
+  }
+  const filtered = resolved.filter((id) => id !== null && id !== undefined && String(id).trim() !== "");
+  return filtered.length ? filtered : null;
+}
+
+function parseDateMs(value, label) {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) {
+    throw new Error(`${label} must be a valid ISO-8601 string`);
+  }
+  return ts;
+}
+
+function filterLiveMessagesByDate(messages, fromDate, toDate) {
+  const fromMs = parseDateMs(fromDate, "fromDate");
+  const toMs = parseDateMs(toDate, "toDate");
+  if (!fromMs && !toMs) {
+    return messages;
+  }
+  return messages.filter((message) => {
+    const ts = typeof message.date === "number" ? message.date * 1000 : null;
+    if (!ts) {
+      return false;
+    }
+    if (fromMs && ts < fromMs) {
+      return false;
+    }
+    if (toMs && ts > toMs) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function formatLiveMessage(message, context) {
+  const dateIso = message.date ? new Date(message.date * 1000).toISOString() : null;
+  return {
+    channelId: context.channelId ?? message.peer_id ?? null,
+    peerTitle: context.peerTitle ?? null,
+    username: context.username ?? null,
+    messageId: message.id,
+    date: dateIso,
+    fromId: message.from_id ?? null,
+    fromUsername: message.from_username ?? null,
+    fromDisplayName: message.from_display_name ?? null,
+    fromPeerType: message.from_peer_type ?? null,
+    fromIsBot: typeof message.from_is_bot === "boolean" ? message.from_is_bot : null,
+    text: message.text ?? message.message ?? "",
+    topicId: message.topic_id ?? null,
+  };
+}
+
+function messageDateMs(message) {
+  const ts = Date.parse(message.date ?? "");
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function mergeMessageSets(sets, limit) {
+  const map = new Map();
+  for (const list of sets) {
+    for (const message of list) {
+      const channelId = message.channelId ?? "";
+      const messageId = message.messageId ?? message.id;
+      const key = `${String(channelId)}:${String(messageId)}`;
+      if (!map.has(key) || message.source === "live") {
+        map.set(key, message);
+      }
+    }
+  }
+  const merged = Array.from(map.values());
+  merged.sort((a, b) => messageDateMs(b) - messageDateMs(a));
+  return limit && limit > 0 ? merged.slice(0, limit) : merged;
+}
+
 function createServerInstance() {
   const server = new McpServer({
     name: "example-mcp-server",
@@ -748,6 +938,367 @@ function createServerInstance() {
                 total,
                 returned: formatted.length,
                 messages: formatted,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesList",
+    "Lists messages from the archive or live Telegram API.",
+    messagesListSchema,
+    async ({ channelId, topicId, source, fromDate, toDate, limit }) => {
+      const resolvedSource = resolveSource(source);
+      const finalLimit = limit ?? 50;
+      const sets = [];
+
+      if (resolvedSource === "archive" || resolvedSource === "both") {
+        const archived = messageSyncService.listArchivedMessages({
+          channelIds: channelId ? [channelId] : null,
+          topicId,
+          fromDate,
+          toDate,
+          limit: finalLimit,
+        });
+        sets.push(archived.map((message) => ({ ...message, source: "archive" })));
+      }
+
+      if (resolvedSource === "live" || resolvedSource === "both") {
+        if (!channelId) {
+          throw new Error("channelId is required for live source.");
+        }
+        await telegramClient.ensureLogin();
+        const channelMeta = messageSyncService.getChannelMetadata(channelId);
+        let peerTitle = channelMeta?.peerTitle ?? null;
+        let username = channelMeta?.username ?? null;
+        let peerId = channelMeta?.channelId ?? String(channelId);
+        let liveMessages = [];
+
+        if (topicId) {
+          const results = await telegramClient.getTopicMessages(channelId, topicId, finalLimit);
+          liveMessages = results.messages;
+          if (!peerTitle || !username) {
+            const meta = await telegramClient.getPeerMetadata(channelId);
+            peerTitle = peerTitle ?? meta?.peerTitle ?? null;
+            username = username ?? meta?.username ?? null;
+          }
+        } else {
+          const results = await telegramClient.getMessagesByChannelId(channelId, finalLimit);
+          liveMessages = results.messages;
+          peerTitle = peerTitle ?? results.peerTitle ?? null;
+          peerId = results.peerId ?? peerId;
+        }
+
+        const filtered = filterLiveMessagesByDate(liveMessages, fromDate, toDate);
+        const formatted = filtered.map((message) => ({
+          ...formatLiveMessage(message, { channelId: peerId, peerTitle, username }),
+          source: "live",
+        }));
+        sets.push(formatted);
+      }
+
+      const messages = resolvedSource === "both"
+        ? mergeMessageSets(sets, finalLimit)
+        : (sets[0] ?? []);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                source: resolvedSource,
+                returned: messages.length,
+                messages,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesGet",
+    "Fetches a specific message from the archive or live Telegram API.",
+    messagesGetSchema,
+    async ({ channelId, messageId, source }) => {
+      const resolvedSource = resolveSource(source);
+      const channelMeta = messageSyncService.getChannelMetadata(channelId);
+      let message = null;
+      let resolvedFrom = null;
+
+      if (resolvedSource === "live" || resolvedSource === "both") {
+        await telegramClient.ensureLogin();
+        const live = await telegramClient.getMessageById(channelId, messageId);
+        if (live) {
+          let peerTitle = channelMeta?.peerTitle ?? null;
+          let username = channelMeta?.username ?? null;
+          if (!peerTitle || !username) {
+            const meta = await telegramClient.getPeerMetadata(channelId);
+            peerTitle = peerTitle ?? meta?.peerTitle ?? null;
+            username = username ?? meta?.username ?? null;
+          }
+          message = {
+            ...formatLiveMessage(live, { channelId: String(channelId), peerTitle, username }),
+            source: "live",
+          };
+          resolvedFrom = "live";
+        }
+      }
+
+      if (!message && (resolvedSource === "archive" || resolvedSource === "both")) {
+        const archived = messageSyncService.getArchivedMessage({ channelId, messageId });
+        if (archived) {
+          message = { ...archived, source: "archive" };
+          resolvedFrom = "archive";
+        }
+      }
+
+      if (!message) {
+        throw new Error("Message not found.");
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                source: resolvedFrom ?? resolvedSource,
+                message,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesContext",
+    "Returns surrounding messages for a target message.",
+    messagesContextSchema,
+    async ({ channelId, messageId, before, after, source }) => {
+      const resolvedSource = resolveSource(source);
+      const safeBefore = Number.isFinite(before) ? before : 20;
+      const safeAfter = Number.isFinite(after) ? after : 20;
+      const channelMeta = messageSyncService.getChannelMetadata(channelId);
+      let context = null;
+      let resolvedFrom = null;
+
+      if (resolvedSource === "live" || resolvedSource === "both") {
+        await telegramClient.ensureLogin();
+        const liveContext = await telegramClient.getMessageContext(channelId, messageId, {
+          before: safeBefore,
+          after: safeAfter,
+        });
+        if (liveContext.target) {
+          let peerTitle = channelMeta?.peerTitle ?? null;
+          let username = channelMeta?.username ?? null;
+          if (!peerTitle || !username) {
+            const meta = await telegramClient.getPeerMetadata(channelId);
+            peerTitle = peerTitle ?? meta?.peerTitle ?? null;
+            username = username ?? meta?.username ?? null;
+          }
+          context = {
+            target: {
+              ...formatLiveMessage(liveContext.target, { channelId: String(channelId), peerTitle, username }),
+              source: "live",
+            },
+            before: liveContext.before.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(channelId), peerTitle, username }),
+              source: "live",
+            })),
+            after: liveContext.after.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(channelId), peerTitle, username }),
+              source: "live",
+            })),
+          };
+          resolvedFrom = "live";
+        }
+      }
+
+      if (!context && (resolvedSource === "archive" || resolvedSource === "both")) {
+        const archiveContext = messageSyncService.getArchivedMessageContext({
+          channelId,
+          messageId,
+          before: safeBefore,
+          after: safeAfter,
+        });
+        if (archiveContext.target) {
+          context = {
+            target: { ...archiveContext.target, source: "archive" },
+            before: archiveContext.before.map((message) => ({ ...message, source: "archive" })),
+            after: archiveContext.after.map((message) => ({ ...message, source: "archive" })),
+          };
+          resolvedFrom = "archive";
+        }
+      }
+
+      if (!context) {
+        throw new Error("Message not found.");
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                source: resolvedFrom ?? resolvedSource,
+                ...context,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "messagesSearch",
+    "Searches messages across the archive or live Telegram API.",
+    messagesSearchSchema,
+    async ({
+      query,
+      regex,
+      source,
+      channelIds,
+      channelId,
+      tags,
+      tag,
+      topicId,
+      fromDate,
+      toDate,
+      limit,
+      caseInsensitive,
+    }) => {
+      const resolvedSource = resolveSource(source);
+      const finalLimit = limit ?? 100;
+      const resolvedTags = Array.isArray(tags) ? tags : (tag ? [tag] : null);
+      const resolvedChannelIds = resolveChannelIds(channelIds, channelId);
+
+      if (!query && !regex && (!resolvedTags || resolvedTags.length === 0)) {
+        throw new Error("Provide query, regex, or tags for messagesSearch.");
+      }
+
+      const sets = [];
+
+      if (resolvedSource === "archive" || resolvedSource === "both") {
+        const archived = messageSyncService.searchArchiveMessages({
+          query,
+          regex,
+          tags: resolvedTags,
+          channelIds: resolvedChannelIds,
+          topicId,
+          fromDate,
+          toDate,
+          limit: finalLimit,
+          caseInsensitive,
+        });
+        sets.push(archived.map((message) => ({ ...message, source: "archive" })));
+      }
+
+      if (resolvedSource === "live" || resolvedSource === "both") {
+        let liveChannelIds = resolvedChannelIds;
+        if ((!liveChannelIds || liveChannelIds.length === 0) && resolvedTags?.length) {
+          const tagged = new Map();
+          for (const tagValue of resolvedTags) {
+            const channels = messageSyncService.listTaggedChannels(tagValue, { limit: 200 });
+            for (const channel of channels) {
+              tagged.set(channel.channelId, channel);
+            }
+          }
+          liveChannelIds = Array.from(tagged.keys());
+        }
+
+        if (!liveChannelIds || liveChannelIds.length === 0) {
+          throw new Error("channelIds are required for live search.");
+        }
+
+        let liveRegex = null;
+        if (regex) {
+          try {
+            liveRegex = new RegExp(regex, caseInsensitive === false ? "" : "i");
+          } catch (error) {
+            throw new Error(`Invalid regex: ${error.message}`);
+          }
+        }
+
+        await telegramClient.ensureLogin();
+        const liveResults = [];
+
+        for (const id of liveChannelIds) {
+          const channelMeta = messageSyncService.getChannelMetadata(id);
+          let peerTitle = channelMeta?.peerTitle ?? null;
+          let username = channelMeta?.username ?? null;
+          let liveMessages = [];
+
+          if (query) {
+            const results = await telegramClient.searchChannelMessages(id, {
+              query,
+              limit: finalLimit,
+              topicId,
+            });
+            liveMessages = results.messages;
+            peerTitle = peerTitle ?? results.peerTitle ?? null;
+          } else if (topicId) {
+            const results = await telegramClient.getTopicMessages(id, topicId, finalLimit);
+            liveMessages = results.messages;
+          } else {
+            const results = await telegramClient.getMessagesByChannelId(id, finalLimit);
+            liveMessages = results.messages;
+            peerTitle = peerTitle ?? results.peerTitle ?? null;
+          }
+
+          if (!peerTitle || !username) {
+            const meta = await telegramClient.getPeerMetadata(id);
+            peerTitle = peerTitle ?? meta?.peerTitle ?? null;
+            username = username ?? meta?.username ?? null;
+          }
+
+          let filtered = filterLiveMessagesByDate(liveMessages, fromDate, toDate);
+          if (liveRegex) {
+            filtered = filtered.filter((message) =>
+              liveRegex.test(message.text ?? message.message ?? ""),
+            );
+          }
+
+          const formatted = filtered.map((message) => ({
+            ...formatLiveMessage(message, { channelId: String(id), peerTitle, username }),
+            source: "live",
+          }));
+          liveResults.push(...formatted);
+        }
+
+        sets.push(liveResults);
+      }
+
+      const messages = resolvedSource === "both"
+        ? mergeMessageSets(sets, finalLimit)
+        : (sets[0] ?? []);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                source: resolvedSource,
+                returned: messages.length,
+                messages,
               },
               null,
               2,

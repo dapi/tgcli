@@ -197,6 +197,24 @@ function toIsoString(dateSeconds) {
   return new Date(dateSeconds * 1000).toISOString();
 }
 
+function formatArchivedRow(row) {
+  const isBot = row.from_is_bot;
+  return {
+    channelId: row.channel_id,
+    peerTitle: row.peer_title ?? null,
+    username: row.username ?? null,
+    messageId: row.message_id,
+    date: row.date ? new Date(row.date * 1000).toISOString() : null,
+    fromId: row.from_id ?? null,
+    fromUsername: row.from_username ?? null,
+    fromDisplayName: row.from_display_name ?? null,
+    fromPeerType: row.from_peer_type ?? null,
+    fromIsBot: typeof isBot === 'number' ? Boolean(isBot) : isBot ?? null,
+    text: row.text ?? '',
+    topicId: row.topic_id ?? null,
+  };
+}
+
 function normalizeTag(tag) {
   if (!tag) return null;
   const normalized = String(tag).trim().toLowerCase();
@@ -1086,6 +1104,267 @@ export default class MessageSyncService {
     }
 
     return matches;
+  }
+
+  listArchivedMessages({ channelIds, topicId, fromDate, toDate, limit = 50 }) {
+    const resolvedIds = Array.isArray(channelIds) ? channelIds : (channelIds ? [channelIds] : []);
+    const normalizedIds = resolvedIds.map((id) => normalizeChannelKey(id)).filter(Boolean);
+    const clauses = [];
+    const params = [];
+
+    if (normalizedIds.length) {
+      clauses.push(`messages.channel_id IN (${normalizedIds.map(() => '?').join(', ')})`);
+      params.push(...normalizedIds);
+    }
+
+    if (typeof topicId === 'number') {
+      clauses.push('messages.topic_id = ?');
+      params.push(topicId);
+    }
+
+    if (fromDate) {
+      params.push(parseIsoDate(fromDate));
+      clauses.push('messages.date >= ?');
+    }
+
+    if (toDate) {
+      params.push(parseIsoDate(toDate));
+      clauses.push('messages.date <= ?');
+    }
+
+    const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const finalLimit = limit && limit > 0 ? Number(limit) : 50;
+    params.push(finalLimit);
+
+    const rows = this.db.prepare(`
+      SELECT
+        messages.channel_id,
+        channels.peer_title,
+        channels.username,
+        messages.message_id,
+        messages.date,
+        messages.from_id,
+        messages.text,
+        messages.topic_id,
+        users.username AS from_username,
+        users.display_name AS from_display_name,
+        users.peer_type AS from_peer_type,
+        users.is_bot AS from_is_bot
+      FROM messages
+      LEFT JOIN channels ON channels.channel_id = messages.channel_id
+      LEFT JOIN users ON users.user_id = messages.from_id
+      ${whereClause}
+      ORDER BY messages.date DESC
+      LIMIT ?
+    `).all(...params);
+
+    return rows.map((row) => formatArchivedRow(row));
+  }
+
+  getArchivedMessage({ channelId, messageId }) {
+    const normalizedId = normalizeChannelKey(channelId);
+    const row = this.db.prepare(`
+      SELECT
+        messages.channel_id,
+        channels.peer_title,
+        channels.username,
+        messages.message_id,
+        messages.date,
+        messages.from_id,
+        messages.text,
+        messages.topic_id,
+        users.username AS from_username,
+        users.display_name AS from_display_name,
+        users.peer_type AS from_peer_type,
+        users.is_bot AS from_is_bot
+      FROM messages
+      LEFT JOIN channels ON channels.channel_id = messages.channel_id
+      LEFT JOIN users ON users.user_id = messages.from_id
+      WHERE messages.channel_id = ? AND messages.message_id = ?
+    `).get(normalizedId, Number(messageId));
+
+    if (!row) {
+      return null;
+    }
+
+    return formatArchivedRow(row);
+  }
+
+  getArchivedMessageContext({ channelId, messageId, before = 20, after = 20 }) {
+    const normalizedId = normalizeChannelKey(channelId);
+    const target = this.getArchivedMessage({ channelId: normalizedId, messageId });
+    if (!target) {
+      return { target: null, before: [], after: [] };
+    }
+
+    const safeBefore = before && before > 0 ? Number(before) : 0;
+    const safeAfter = after && after > 0 ? Number(after) : 0;
+
+    const beforeRows = safeBefore > 0
+      ? this.db.prepare(`
+          SELECT
+            messages.channel_id,
+            channels.peer_title,
+            channels.username,
+            messages.message_id,
+            messages.date,
+            messages.from_id,
+            messages.text,
+            messages.topic_id,
+            users.username AS from_username,
+            users.display_name AS from_display_name,
+            users.peer_type AS from_peer_type,
+            users.is_bot AS from_is_bot
+          FROM messages
+          LEFT JOIN channels ON channels.channel_id = messages.channel_id
+          LEFT JOIN users ON users.user_id = messages.from_id
+          WHERE messages.channel_id = ? AND messages.message_id < ?
+          ORDER BY messages.message_id DESC
+          LIMIT ?
+        `).all(normalizedId, Number(messageId), safeBefore)
+      : [];
+
+    const afterRows = safeAfter > 0
+      ? this.db.prepare(`
+          SELECT
+            messages.channel_id,
+            channels.peer_title,
+            channels.username,
+            messages.message_id,
+            messages.date,
+            messages.from_id,
+            messages.text,
+            messages.topic_id,
+            users.username AS from_username,
+            users.display_name AS from_display_name,
+            users.peer_type AS from_peer_type,
+            users.is_bot AS from_is_bot
+          FROM messages
+          LEFT JOIN channels ON channels.channel_id = messages.channel_id
+          LEFT JOIN users ON users.user_id = messages.from_id
+          WHERE messages.channel_id = ? AND messages.message_id > ?
+          ORDER BY messages.message_id ASC
+          LIMIT ?
+        `).all(normalizedId, Number(messageId), safeAfter)
+      : [];
+
+    const beforeMessages = beforeRows.map((row) => formatArchivedRow(row)).reverse();
+    const afterMessages = afterRows.map((row) => formatArchivedRow(row));
+
+    return {
+      target,
+      before: beforeMessages,
+      after: afterMessages,
+    };
+  }
+
+  searchArchiveMessages(options = {}) {
+    const queryText = typeof options.query === 'string' ? options.query.trim() : '';
+    const regexText = typeof options.regex === 'string' ? options.regex.trim() : '';
+    const tagList = Array.isArray(options.tags) ? options.tags : (options.tag ? [options.tag] : []);
+    const normalizedTags = tagList.map((tag) => normalizeTag(tag)).filter(Boolean);
+    const resolvedIds = Array.isArray(options.channelIds)
+      ? options.channelIds
+      : (options.channelIds ? [options.channelIds] : []);
+    const normalizedIds = resolvedIds.map((id) => normalizeChannelKey(id)).filter(Boolean);
+    const topicId = typeof options.topicId === 'number' ? options.topicId : null;
+    const finalLimit = options.limit && options.limit > 0 ? Number(options.limit) : 100;
+    const caseInsensitive = options.caseInsensitive !== false;
+
+    let regex = null;
+    if (regexText) {
+      try {
+        regex = new RegExp(regexText, caseInsensitive ? 'i' : '');
+      } catch (error) {
+        throw new Error(`Invalid regex: ${error.message}`);
+      }
+    }
+
+    const clauses = [];
+    const params = [];
+    const joinTags = normalizedTags.length
+      ? 'JOIN channel_tags ON channel_tags.channel_id = messages.channel_id'
+      : '';
+
+    if (normalizedTags.length) {
+      clauses.push(`channel_tags.tag IN (${normalizedTags.map(() => '?').join(', ')})`);
+      params.push(...normalizedTags);
+    }
+
+    if (normalizedIds.length) {
+      clauses.push(`messages.channel_id IN (${normalizedIds.map(() => '?').join(', ')})`);
+      params.push(...normalizedIds);
+    }
+
+    if (topicId !== null) {
+      clauses.push('messages.topic_id = ?');
+      params.push(topicId);
+    }
+
+    if (options.fromDate) {
+      params.push(parseIsoDate(options.fromDate));
+      clauses.push('messages.date >= ?');
+    }
+
+    if (options.toDate) {
+      params.push(parseIsoDate(options.toDate));
+      clauses.push('messages.date <= ?');
+    }
+
+    if (queryText) {
+      clauses.push('message_search MATCH ?');
+      params.push(queryText);
+    }
+
+    const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const preLimit = regex ? Math.min(finalLimit * 5, 1000) : finalLimit;
+    params.push(preLimit);
+
+    const baseSelect = `
+      SELECT DISTINCT
+        messages.channel_id,
+        channels.peer_title,
+        channels.username,
+        messages.message_id,
+        messages.date,
+        messages.from_id,
+        messages.text,
+        messages.topic_id,
+        users.username AS from_username,
+        users.display_name AS from_display_name,
+        users.peer_type AS from_peer_type,
+        users.is_bot AS from_is_bot
+    `;
+
+    const rows = queryText
+      ? this.db.prepare(`
+          ${baseSelect}
+          FROM message_search
+          JOIN messages ON messages.id = message_search.rowid
+          ${joinTags}
+          LEFT JOIN channels ON channels.channel_id = messages.channel_id
+          LEFT JOIN users ON users.user_id = messages.from_id
+          ${whereClause}
+          ORDER BY messages.date DESC
+          LIMIT ?
+        `).all(...params)
+      : this.db.prepare(`
+          ${baseSelect}
+          FROM messages
+          ${joinTags}
+          LEFT JOIN channels ON channels.channel_id = messages.channel_id
+          LEFT JOIN users ON users.user_id = messages.from_id
+          ${whereClause}
+          ORDER BY messages.date DESC
+          LIMIT ?
+        `).all(...params);
+
+    let results = rows.map((row) => formatArchivedRow(row));
+    if (regex) {
+      results = results.filter((row) => regex.test(row.text || ''));
+    }
+
+    return results.slice(0, finalLimit);
   }
 
   getArchivedMessages({ channelId, topicId, limit = 50 }) {

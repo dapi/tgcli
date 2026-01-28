@@ -288,6 +288,98 @@ class TelegramClient {
     };
   }
 
+  async getMessageById(channelId, messageId) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    const [message] = await this.client.getMessages(peerRef, Number(messageId));
+    if (!message) {
+      return null;
+    }
+    const peer = message.chat ?? await this.client.resolvePeer(peerRef);
+    return this._serializeMessage(message, peer);
+  }
+
+  async getMessageContext(channelId, messageId, options = {}) {
+    await this.ensureLogin();
+    const safeBefore = Number.isFinite(options.before) && options.before >= 0
+      ? Number(options.before)
+      : 20;
+    const safeAfter = Number.isFinite(options.after) && options.after >= 0
+      ? Number(options.after)
+      : 20;
+    const total = safeBefore + safeAfter + 1;
+
+    const peerRef = normalizeChannelId(channelId);
+    const [message] = await this.client.getMessages(peerRef, Number(messageId));
+    if (!message) {
+      return { target: null, before: [], after: [] };
+    }
+
+    let dateSeconds = 0;
+    if (message.date instanceof Date) {
+      dateSeconds = Math.floor(message.date.getTime() / 1000);
+    } else if (typeof message.date === 'number') {
+      dateSeconds = Math.floor(message.date);
+    }
+
+    const history = await this.client.getHistory(peerRef, {
+      offset: {
+        id: message.id,
+        date: dateSeconds,
+      },
+      addOffset: -safeBefore,
+      limit: total,
+    });
+
+    const peer = message.chat ?? await this.client.resolvePeer(peerRef);
+    const target = this._serializeMessage(message, peer);
+    const before = [];
+    const after = [];
+
+    for (const entry of history) {
+      const serialized = this._serializeMessage(entry, peer);
+      if (serialized.id < target.id) {
+        before.push(serialized);
+      } else if (serialized.id > target.id) {
+        after.push(serialized);
+      }
+    }
+
+    before.sort((a, b) => a.id - b.id);
+    after.sort((a, b) => a.id - b.id);
+
+    return {
+      target,
+      before: before.slice(-safeBefore),
+      after: after.slice(0, safeAfter),
+    };
+  }
+
+  async searchChannelMessages(channelId, options = {}) {
+    await this.ensureLogin();
+    const query = typeof options.query === 'string' ? options.query : '';
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 50;
+    const threadId = typeof options.topicId === 'number' ? options.topicId : undefined;
+    const peerRef = normalizeChannelId(channelId);
+    const peer = await this.client.resolvePeer(peerRef);
+    const results = await this.client.searchMessages({
+      chatId: peerRef,
+      threadId,
+      limit,
+      query,
+    });
+    const messages = results.map((message) => this._serializeMessage(message, peer));
+
+    return {
+      peerTitle: peer?.displayName || 'Unknown',
+      peerId: peer?.id?.toString?.() ?? String(channelId),
+      peerType: normalizePeerType(peer),
+      total: results.total ?? messages.length,
+      next: results.next ?? null,
+      messages,
+    };
+  }
+
   async getPeerMetadata(channelId, peerType) {
     await this.ensureLogin();
     const peerRef = normalizeChannelId(channelId);
@@ -456,8 +548,9 @@ class TelegramClient {
 
   async getTopicMessages(channelId, topicId, limit = 50, options = {}) {
     await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
     const results = await this.client.searchMessages({
-      chatId: channelId,
+      chatId: peerRef,
       threadId: topicId,
       limit,
       query: options.query ?? '',
