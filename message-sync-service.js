@@ -7,7 +7,7 @@ import { normalizeChannelId } from './telegram-client.js';
 
 const DEFAULT_DB_PATH = './data/messages.db';
 const DEFAULT_TARGET_MESSAGES = 1000;
-const SEARCH_INDEX_VERSION = 1;
+const SEARCH_INDEX_VERSION = 2;
 const METADATA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const JOB_STATUS = {
   PENDING: 'pending',
@@ -15,6 +15,9 @@ const JOB_STATUS = {
   IDLE: 'idle',
   ERROR: 'error',
 };
+const URL_PATTERN = /https?:\/\/[^\s<>"')]+/giu;
+const FILE_NAME_PATTERN = /\b[\w.\-]+\.[a-z0-9]{2,7}\b/iu;
+const MAX_FILENAME_SCAN_DEPTH = 5;
 
 const TAG_RULES = [
   {
@@ -215,6 +218,133 @@ function formatArchivedRow(row) {
   };
 }
 
+function extractLinksFromText(text) {
+  if (!text || typeof text !== 'string') {
+    return [];
+  }
+  const matches = text.match(URL_PATTERN) ?? [];
+  const results = new Set();
+  for (const raw of matches) {
+    const cleaned = raw.replace(/[),.!?;:]+$/g, '');
+    if (cleaned) {
+      results.add(cleaned);
+    }
+  }
+  return [...results];
+}
+
+function extractFileNamesFromText(text) {
+  if (!text || typeof text !== 'string') {
+    return [];
+  }
+  const matches = text.match(new RegExp(FILE_NAME_PATTERN.source, 'giu')) ?? [];
+  return matches;
+}
+
+function collectFileNames(value, results, depth = 0) {
+  if (!value || depth > MAX_FILENAME_SCAN_DEPTH) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectFileNames(entry, results, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== 'object') {
+    return;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if ((key === 'fileName' || key === 'file_name') && typeof entry === 'string') {
+      results.add(entry);
+      continue;
+    }
+    if (key === 'name' && typeof entry === 'string' && FILE_NAME_PATTERN.test(entry)) {
+      results.add(entry);
+      continue;
+    }
+    collectFileNames(entry, results, depth + 1);
+  }
+}
+
+function extractFileNames(message) {
+  const results = new Set();
+  const textFiles = extractFileNamesFromText(message?.text ?? message?.message ?? null);
+  for (const entry of textFiles) {
+    results.add(entry);
+  }
+  if (message?.raw) {
+    collectFileNames(message.raw, results);
+  }
+  return [...results];
+}
+
+function buildSenderText(message) {
+  const parts = [];
+  if (message?.from_username) {
+    parts.push(String(message.from_username));
+  }
+  if (message?.from_display_name) {
+    parts.push(String(message.from_display_name));
+  }
+  if (message?.from_id) {
+    parts.push(String(message.from_id));
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
+function buildTopicText(message) {
+  if (!message) {
+    return null;
+  }
+  if (typeof message.topic_title === 'string' && message.topic_title.trim()) {
+    return message.topic_title.trim();
+  }
+  if (message.topic_id !== null && message.topic_id !== undefined) {
+    return String(message.topic_id);
+  }
+  return null;
+}
+
+function buildLinkEntries(links) {
+  const entries = [];
+  for (const url of links) {
+    let domain = null;
+    try {
+      domain = new URL(url).hostname || null;
+    } catch (error) {
+      domain = null;
+    }
+    entries.push({ url, domain });
+  }
+  return entries;
+}
+
+function buildSearchFields(message) {
+  const links = extractLinksFromText(message?.text ?? message?.message ?? null);
+  const files = extractFileNames(message);
+  const sender = buildSenderText(message);
+  const topic = buildTopicText(message);
+  return {
+    linksText: links.length ? links.join(' ') : null,
+    filesText: files.length ? files.join(' ') : null,
+    senderText: sender,
+    topicText: topic,
+    linkEntries: buildLinkEntries(links),
+  };
+}
+
+function safeParseJson(value) {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return null;
+  }
+}
+
 function normalizeTag(tag) {
   if (!tag) return null;
   const normalized = String(tag).trim().toLowerCase();
@@ -362,6 +492,10 @@ export default class MessageSyncService {
         date INTEGER,
         from_id TEXT,
         text TEXT,
+        links TEXT,
+        files TEXT,
+        sender TEXT,
+        topic TEXT,
         raw_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(channel_id, message_id)
@@ -369,6 +503,48 @@ export default class MessageSyncService {
     `);
 
     this._ensureMessageColumn('topic_id', 'INTEGER');
+    this._ensureMessageColumn('links', 'TEXT');
+    this._ensureMessageColumn('files', 'TEXT');
+    this._ensureMessageColumn('sender', 'TEXT');
+    this._ensureMessageColumn('topic', 'TEXT');
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        domain TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(channel_id, message_id, url)
+      );
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS message_links_url_idx
+      ON message_links (url);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS message_links_domain_idx
+      ON message_links (domain);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS topics (
+        channel_id TEXT NOT NULL,
+        topic_id INTEGER NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel_id, topic_id)
+      );
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS topics_title_idx
+      ON topics (title);
+    `);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS search_meta (
@@ -381,13 +557,15 @@ export default class MessageSyncService {
       SELECT sql FROM sqlite_master
       WHERE type = 'table' AND name = 'message_search'
     `).get();
-    const needsSearchRecreate = !searchSchema?.sql
-      || !searchSchema.sql.includes("tokenize='unicode61'");
     const storedVersion = this.db.prepare(`
       SELECT value FROM search_meta WHERE key = 'search_index_version'
     `).get()?.value;
     const needsVersionRebuild = Number(storedVersion ?? 0) !== SEARCH_INDEX_VERSION;
-    const shouldRebuildSearch = needsSearchRecreate || needsVersionRebuild;
+    const needsSearchRecreate = !searchSchema?.sql
+      || !searchSchema.sql.includes("tokenize='unicode61'")
+      || !searchSchema.sql.includes('links')
+      || needsVersionRebuild;
+    const shouldRebuildSearch = needsSearchRecreate;
 
     if (needsSearchRecreate) {
       this.db.exec(`
@@ -398,9 +576,17 @@ export default class MessageSyncService {
       `);
     }
 
+    if (needsVersionRebuild) {
+      this._backfillSearchFields();
+    }
+
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(
         text,
+        links,
+        files,
+        sender,
+        topic,
         content='messages',
         content_rowid='id',
         tokenize='unicode61'
@@ -410,26 +596,56 @@ export default class MessageSyncService {
     this.db.exec(`
       CREATE TRIGGER IF NOT EXISTS messages_ai
       AFTER INSERT ON messages BEGIN
-        INSERT INTO message_search(rowid, text)
-        VALUES (new.id, COALESCE(new.text, ''));
+        INSERT INTO message_search(rowid, text, links, files, sender, topic)
+        VALUES (
+          new.id,
+          COALESCE(new.text, ''),
+          COALESCE(new.links, ''),
+          COALESCE(new.files, ''),
+          COALESCE(new.sender, ''),
+          COALESCE(new.topic, '')
+        );
       END;
     `);
 
     this.db.exec(`
       CREATE TRIGGER IF NOT EXISTS messages_ad
       AFTER DELETE ON messages BEGIN
-        INSERT INTO message_search(message_search, rowid, text)
-        VALUES ('delete', old.id, COALESCE(old.text, ''));
+        INSERT INTO message_search(message_search, rowid, text, links, files, sender, topic)
+        VALUES (
+          'delete',
+          old.id,
+          COALESCE(old.text, ''),
+          COALESCE(old.links, ''),
+          COALESCE(old.files, ''),
+          COALESCE(old.sender, ''),
+          COALESCE(old.topic, '')
+        );
       END;
     `);
 
     this.db.exec(`
       CREATE TRIGGER IF NOT EXISTS messages_au
       AFTER UPDATE ON messages BEGIN
-        INSERT INTO message_search(message_search, rowid, text)
-        VALUES ('delete', old.id, COALESCE(old.text, ''));
-        INSERT INTO message_search(rowid, text)
-        VALUES (new.id, COALESCE(new.text, ''));
+        INSERT INTO message_search(message_search, rowid, text, links, files, sender, topic)
+        VALUES (
+          'delete',
+          old.id,
+          COALESCE(old.text, ''),
+          COALESCE(old.links, ''),
+          COALESCE(old.files, ''),
+          COALESCE(old.sender, ''),
+          COALESCE(old.topic, '')
+        );
+        INSERT INTO message_search(rowid, text, links, files, sender, topic)
+        VALUES (
+          new.id,
+          COALESCE(new.text, ''),
+          COALESCE(new.links, ''),
+          COALESCE(new.files, ''),
+          COALESCE(new.sender, ''),
+          COALESCE(new.topic, '')
+        );
       END;
     `);
 
@@ -489,26 +705,105 @@ export default class MessageSyncService {
     `);
 
     this.insertMessageStmt = this.db.prepare(`
-      INSERT OR IGNORE INTO messages (channel_id, message_id, topic_id, date, from_id, text, raw_json)
-      VALUES (@channel_id, @message_id, @topic_id, @date, @from_id, @text, @raw_json)
+      INSERT OR IGNORE INTO messages (
+        channel_id,
+        message_id,
+        topic_id,
+        date,
+        from_id,
+        text,
+        links,
+        files,
+        sender,
+        topic,
+        raw_json
+      )
+      VALUES (
+        @channel_id,
+        @message_id,
+        @topic_id,
+        @date,
+        @from_id,
+        @text,
+        @links,
+        @files,
+        @sender,
+        @topic,
+        @raw_json
+      )
     `);
 
     this.upsertMessageStmt = this.db.prepare(`
-      INSERT INTO messages (channel_id, message_id, topic_id, date, from_id, text, raw_json)
-      VALUES (@channel_id, @message_id, @topic_id, @date, @from_id, @text, @raw_json)
+      INSERT INTO messages (
+        channel_id,
+        message_id,
+        topic_id,
+        date,
+        from_id,
+        text,
+        links,
+        files,
+        sender,
+        topic,
+        raw_json
+      )
+      VALUES (
+        @channel_id,
+        @message_id,
+        @topic_id,
+        @date,
+        @from_id,
+        @text,
+        @links,
+        @files,
+        @sender,
+        @topic,
+        @raw_json
+      )
       ON CONFLICT(channel_id, message_id) DO UPDATE SET
         topic_id = excluded.topic_id,
         date = excluded.date,
         from_id = excluded.from_id,
         text = excluded.text,
+        links = excluded.links,
+        files = excluded.files,
+        sender = excluded.sender,
+        topic = excluded.topic,
         raw_json = excluded.raw_json
+    `);
+
+    this.insertMessageLinkStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO message_links (channel_id, message_id, url, domain)
+      VALUES (@channel_id, @message_id, @url, @domain)
+    `);
+
+    this.deleteMessageLinksStmt = this.db.prepare(`
+      DELETE FROM message_links
+      WHERE channel_id = ? AND message_id = ?
+    `);
+
+    this.upsertTopicStmt = this.db.prepare(`
+      INSERT INTO topics (channel_id, topic_id, title, updated_at)
+      VALUES (@channel_id, @topic_id, @title, CURRENT_TIMESTAMP)
+      ON CONFLICT(channel_id, topic_id) DO UPDATE SET
+        title = excluded.title,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    this.updateMessagesTopicStmt = this.db.prepare(`
+      UPDATE messages
+      SET topic = ?
+      WHERE channel_id = ? AND topic_id = ?
     `);
 
     this.insertMessagesTx = this.db.transaction((records) => {
       let inserted = 0;
       for (const record of records) {
         const result = this.insertMessageStmt.run(record);
-        inserted += result.changes;
+        if (result.changes > 0) {
+          inserted += result.changes;
+          this._replaceMessageLinks(record);
+        }
       }
       return inserted;
     });
@@ -528,6 +823,19 @@ export default class MessageSyncService {
     this.upsertUsersTx = this.db.transaction((records) => {
       for (const record of records) {
         this.upsertUserStmt.run(record);
+      }
+    });
+
+    this.upsertTopicsTx = this.db.transaction((channelId, topics) => {
+      for (const topic of topics) {
+        this.upsertTopicStmt.run({
+          channel_id: channelId,
+          topic_id: topic.id,
+          title: topic.title ?? null,
+        });
+        if (topic.title) {
+          this.updateMessagesTopicStmt.run(topic.title, channelId, topic.id);
+        }
       }
     });
 
@@ -574,6 +882,24 @@ export default class MessageSyncService {
     });
 
     tx(dialogs);
+  }
+
+  upsertTopics(channelId, topics = []) {
+    const normalizedId = normalizeChannelKey(channelId);
+    const entries = [];
+    for (const topic of topics || []) {
+      const id = typeof topic.id === 'number' ? topic.id : Number(topic.id);
+      if (!Number.isFinite(id)) {
+        continue;
+      }
+      const title = typeof topic.title === 'string' ? topic.title : null;
+      entries.push({ id, title });
+    }
+    if (!entries.length) {
+      return 0;
+    }
+    this.upsertTopicsTx(normalizedId, entries);
+    return entries.length;
   }
 
   listActiveChannels() {
@@ -1695,7 +2021,82 @@ export default class MessageSyncService {
     `).get(String(channelId)).cnt;
   }
 
+  _replaceMessageLinks(record) {
+    if (!record) {
+      return;
+    }
+    this.deleteMessageLinksStmt.run(record.channel_id, record.message_id);
+    const entries = Array.isArray(record.link_entries) ? record.link_entries : [];
+    for (const entry of entries) {
+      this.insertMessageLinkStmt.run({
+        channel_id: record.channel_id,
+        message_id: record.message_id,
+        url: entry.url,
+        domain: entry.domain ?? null,
+      });
+    }
+  }
+
+  _backfillSearchFields() {
+    const selectStmt = this.db.prepare(`
+      SELECT id, channel_id, message_id, raw_json, text, topic_id, from_id
+      FROM messages
+      WHERE id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `);
+    const updateStmt = this.db.prepare(`
+      UPDATE messages
+      SET links = ?, files = ?, sender = ?, topic = ?
+      WHERE id = ?
+    `);
+    const deleteLinksStmt = this.db.prepare(`
+      DELETE FROM message_links
+      WHERE channel_id = ? AND message_id = ?
+    `);
+    const insertLinkStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO message_links (channel_id, message_id, url, domain)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    const applyBatch = this.db.transaction((rows) => {
+      for (const row of rows) {
+        const parsed = safeParseJson(row.raw_json) ?? {};
+        const message = {
+          ...parsed,
+          text: parsed.text ?? row.text ?? null,
+          topic_id: parsed.topic_id ?? row.topic_id ?? null,
+          from_id: parsed.from_id ?? row.from_id ?? null,
+        };
+        const fields = buildSearchFields(message);
+        updateStmt.run(
+          fields.linksText,
+          fields.filesText,
+          fields.senderText,
+          fields.topicText,
+          row.id,
+        );
+        deleteLinksStmt.run(row.channel_id, row.message_id);
+        for (const entry of fields.linkEntries) {
+          insertLinkStmt.run(row.channel_id, row.message_id, entry.url, entry.domain);
+        }
+      }
+    });
+
+    let lastId = 0;
+    const batchSize = 500;
+    while (true) {
+      const rows = selectStmt.all(lastId, batchSize);
+      if (!rows.length) {
+        break;
+      }
+      applyBatch(rows);
+      lastId = rows[rows.length - 1].id;
+    }
+  }
+
   _buildMessageRecord(channelId, message) {
+    const searchFields = buildSearchFields(message);
     return {
       channel_id: channelId,
       message_id: message.id,
@@ -1703,7 +2104,12 @@ export default class MessageSyncService {
       date: message.date ?? null,
       from_id: message.from_id ?? null,
       text: message.text ?? null,
+      links: searchFields.linksText,
+      files: searchFields.filesText,
+      sender: searchFields.senderText,
+      topic: searchFields.topicText,
       raw_json: JSON.stringify(message),
+      link_entries: searchFields.linkEntries,
     };
   }
 
@@ -1875,8 +2281,10 @@ export default class MessageSyncService {
 
     if (isEdit) {
       this.upsertMessageStmt.run(record);
+      this._replaceMessageLinks(record);
     } else {
       this.insertMessageStmt.run(record);
+      this._replaceMessageLinks(record);
     }
 
     const messageDate = toIsoString(serialized.date);
@@ -1902,11 +2310,22 @@ export default class MessageSyncService {
         DELETE FROM messages
         WHERE channel_id = ? AND message_id IN (${placeholders})
       `).run(channelId, ...ids);
+      this.db.prepare(`
+        DELETE FROM message_links
+        WHERE channel_id = ? AND message_id IN (${placeholders})
+      `).run(channelId, ...ids);
       return;
     }
 
     this.db.prepare(`
       DELETE FROM messages
+      WHERE message_id IN (${placeholders})
+        AND channel_id IN (
+          SELECT channel_id FROM channels WHERE peer_type IN ('chat', 'user')
+        )
+    `).run(...ids);
+    this.db.prepare(`
+      DELETE FROM message_links
       WHERE message_id IN (${placeholders})
         AND channel_id IN (
           SELECT channel_id FROM channels WHERE peer_type IN ('chat', 'user')

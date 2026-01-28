@@ -817,6 +817,7 @@ function createServerInstance() {
     async ({ channelId, limit }) => {
       await telegramClient.ensureLogin();
       const topics = await telegramClient.listForumTopics(channelId, { limit: limit ?? 100 });
+      messageSyncService.upsertTopics(channelId, topics);
 
       const formatted = topics.map((topic) => {
         let lastMessage = null;
@@ -868,6 +869,7 @@ function createServerInstance() {
     async ({ channelId, query, limit }) => {
       await telegramClient.ensureLogin();
       const topics = await telegramClient.listForumTopics(channelId, { query, limit: limit ?? 100 });
+      messageSyncService.upsertTopics(channelId, topics);
 
       const formatted = topics.map((topic) => ({
         id: topic.id,
