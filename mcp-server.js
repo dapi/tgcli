@@ -14,7 +14,7 @@ dotenv.config();
 const HOST = process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
 
-const storeDir = resolveStoreDir(null, { defaultDir: "./data" });
+const storeDir = resolveStoreDir();
 const { telegramClient, messageSyncService } = createServices({ storeDir });
 
 let telegramReady = false;

@@ -4,8 +4,11 @@ import EventEmitter from 'events';
 import readline from 'readline';
 import path from 'path';
 import fs from 'fs';
+import { resolveStoreDir, resolveStorePaths } from './core/store.js';
 
-const DEFAULT_DOWNLOAD_DIR = './data/downloads';
+const DEFAULT_STORE_DIR = resolveStoreDir();
+const { sessionPath: DEFAULT_SESSION_PATH } = resolveStorePaths(DEFAULT_STORE_DIR);
+const DEFAULT_DOWNLOAD_DIR = path.join(DEFAULT_STORE_DIR, 'downloads');
 const MIME_EXTENSION_MAP = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -261,7 +264,7 @@ export function normalizeChannelId(channelId) {
 }
 
 class TelegramClient {
-  constructor(apiId, apiHash, phoneNumber, sessionPath = './data/session.json', options = {}) {
+  constructor(apiId, apiHash, phoneNumber, sessionPath = DEFAULT_SESSION_PATH, options = {}) {
     this.apiId = coerceApiId(apiId);
     this.apiHash = sanitizeString(apiHash);
     this.phoneNumber = sanitizeString(phoneNumber);

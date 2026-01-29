@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from 'fs';
+import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 import { acquireStoreLock, readStoreLock } from './store-lock.js';
@@ -10,9 +12,9 @@ import { resolveStoreDir } from './core/store.js';
 dotenv.config();
 
 function printUsage() {
-  const text = `frogiverse CLI\n\n` +
+  const text = `tgcli CLI\n\n` +
     `Usage:\n` +
-    `  node cli.js [--store DIR] [--json] [--timeout 30s] [--version] <command> [options]\n\n` +
+    `  tgcli [--json] [--timeout 30s] [--version] <command> [options]\n\n` +
     `Commands:\n` +
     `  auth [--follow]\n` +
     `  auth status\n` +
@@ -23,6 +25,7 @@ function printUsage() {
     `  sync jobs add --chat <id|username> [--depth N] [--min-date ISO]\n` +
     `  sync jobs retry [--job-id N] [--channel <id|username>] [--all-errors]\n` +
     `  sync jobs cancel --job-id N|--channel <id|username>\n` +
+    `  server\n` +
     `  doctor [--connect]\n` +
     `  channels list [--query TEXT] [--limit N]\n` +
     `  channels show --chat <id|username>\n` +
@@ -92,14 +95,20 @@ function parseDuration(value) {
   return amount * 1000;
 }
 
-function runWithTimeout(task, timeoutMs) {
+function runWithTimeout(task, timeoutMs, onTimeout) {
   if (!timeoutMs) {
     return task();
   }
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error('Timeout'));
+    timeoutId = setTimeout(async () => {
+      try {
+        if (onTimeout) {
+          await onTimeout();
+        }
+      } finally {
+        reject(new Error('Timeout'));
+      }
     }, timeoutMs);
   });
   return Promise.race([task(), timeoutPromise]).finally(() => {
@@ -121,7 +130,6 @@ function readVersion() {
 
 function parseGlobalFlags(args) {
   const flags = {
-    store: null,
     json: false,
     help: false,
     version: false,
@@ -144,19 +152,6 @@ function parseGlobalFlags(args) {
     }
     if (arg === '--version') {
       flags.version = true;
-      continue;
-    }
-    if (arg === '--store') {
-      const next = args[i + 1];
-      if (!next) {
-        throw new Error('--store requires a value');
-      }
-      flags.store = next;
-      i += 1;
-      continue;
-    }
-    if (arg.startsWith('--store=')) {
-      flags.store = arg.slice('--store='.length);
       continue;
     }
     if (arg === '--timeout') {
@@ -389,7 +384,7 @@ async function runAuth(globalFlags, args) {
       follow: { type: 'boolean' },
     });
     const subcommand = rest[0];
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
 
     if (subcommand === 'status') {
       const { telegramClient, messageSyncService } = createServices({ storeDir });
@@ -471,7 +466,7 @@ async function runSync(globalFlags, args) {
       follow: { type: 'boolean' },
       'idle-exit': { type: 'string' },
     });
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     const idleExitMs = parseDuration(flags['idle-exit'] || '30s');
@@ -516,10 +511,56 @@ async function runSync(globalFlags, args) {
   }, timeoutMs);
 }
 
+async function runServer(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  let child = null;
+
+  const runChild = () => new Promise((resolve, reject) => {
+    const serverPath = fileURLToPath(new URL('./mcp-server.js', import.meta.url));
+    const handleSignal = (signal) => {
+      if (child && !child.killed) {
+        child.kill(signal);
+      }
+    };
+    const cleanup = () => {
+      process.off('SIGINT', handleSignal);
+      process.off('SIGTERM', handleSignal);
+    };
+
+    process.on('SIGINT', handleSignal);
+    process.on('SIGTERM', handleSignal);
+
+    child = spawn(process.execPath, [serverPath], {
+      stdio: 'inherit',
+      env: process.env,
+    });
+
+    child.on('error', (error) => {
+      cleanup();
+      reject(error);
+    });
+
+    child.on('exit', (code, signal) => {
+      cleanup();
+      if (code === 0 || signal === 'SIGINT' || signal === 'SIGTERM') {
+        resolve();
+        return;
+      }
+      reject(new Error(`Server exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`));
+    });
+  });
+
+  return runWithTimeout(runChild, timeoutMs, () => {
+    if (child && !child.killed) {
+      child.kill('SIGTERM');
+    }
+  });
+}
+
 async function runSyncStatus(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const queue = messageSyncService.getQueueStats();
@@ -544,7 +585,7 @@ async function runSyncJobs(globalFlags, args) {
       throw new Error('sync jobs requires a subcommand: list | add | retry | cancel');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
 
     if (mode === 'list') {
       const { flags } = parseFlags(rest, {
@@ -680,7 +721,7 @@ async function runDoctor(globalFlags, args) {
     const { flags } = parseFlags(args, {
       connect: { type: 'boolean' },
     });
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const lock = readStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
@@ -736,7 +777,7 @@ async function runChannels(globalFlags, args) {
       throw new Error('channels requires a subcommand');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -851,7 +892,7 @@ async function runMessages(globalFlags, args) {
       throw new Error('messages requires a subcommand: list | search | show | context');
     }
 
-  const storeDir = resolveStoreDir(globalFlags.store);
+  const storeDir = resolveStoreDir();
   const release = acquireStoreLock(storeDir);
   const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1236,7 +1277,7 @@ async function runSend(globalFlags, args) {
       throw new Error('send requires a subcommand: text | file');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1332,7 +1373,7 @@ async function runMedia(globalFlags, args) {
     }
     const messageId = parsePositiveInt(flags.id, '--id');
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1365,7 +1406,7 @@ async function runTopics(globalFlags, args) {
       throw new Error('topics requires a subcommand: list | search');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1442,7 +1483,7 @@ async function runTags(globalFlags, args) {
       throw new Error('tags requires a subcommand');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1563,7 +1604,7 @@ async function runMetadata(globalFlags, args) {
       throw new Error('metadata requires a subcommand');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1644,7 +1685,7 @@ async function runContacts(globalFlags, args) {
       throw new Error('contacts requires a subcommand');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -1818,7 +1859,7 @@ async function runGroups(globalFlags, args) {
       throw new Error('groups requires a subcommand');
     }
 
-    const storeDir = resolveStoreDir(globalFlags.store);
+    const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
@@ -2034,6 +2075,10 @@ async function main() {
         return;
       }
       await runSync(globalFlags, args);
+      return;
+    }
+    if (command === 'server') {
+      await runServer(globalFlags);
       return;
     }
     if (command === 'doctor') {

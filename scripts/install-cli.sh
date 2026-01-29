@@ -7,4 +7,4 @@ cd "$ROOT_DIR"
 npm install
 npm link
 
-echo "Installed CLI. Run: frogiverse --help"
+echo "Installed CLI. Run: tgcli --help"

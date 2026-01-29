@@ -1,8 +1,8 @@
 {
-  "name": "telegram-mcp-server",
+  "name": "@kfastov/tgcli",
   "version": "1.0.0",
   "type": "module",
-  "description": "MCP server scaffold for Telegram workflows using the official Model Context Protocol SDK",
+  "description": "Telegram CLI + MCP server powered by MTProto and the official MCP SDK",
   "main": "mcp-server.js",
   "scripts": {
     "client": "node mcp-client.js",
@@ -14,7 +14,7 @@
     "test": "echo \"No tests specified yet\""
   },
   "bin": {
-    "frogiverse": "./cli.js"
+    "tgcli": "./cli.js"
   },
   "files": [
     "cli.js",

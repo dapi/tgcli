@@ -7,8 +7,7 @@ async function main() {
   const client = new TelegramClient(
     process.env.TELEGRAM_API_ID,
     process.env.TELEGRAM_API_HASH,
-    process.env.TELEGRAM_PHONE_NUMBER,
-    './data/session.json'
+    process.env.TELEGRAM_PHONE_NUMBER
   );
 
   await client.initializeDialogCache();

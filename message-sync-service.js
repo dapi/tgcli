@@ -4,8 +4,9 @@ import fs from 'fs';
 import { setTimeout as delay } from 'timers/promises';
 import { Message, PeersIndex, _messageMediaFromTl } from '@mtcute/core';
 import { normalizeChannelId, summarizeMedia } from './telegram-client.js';
+import { resolveStoreDir, resolveStorePaths } from './core/store.js';
 
-const DEFAULT_DB_PATH = './data/messages.db';
+const DEFAULT_DB_PATH = resolveStorePaths(resolveStoreDir()).dbPath;
 const DEFAULT_TARGET_MESSAGES = 1000;
 const SEARCH_INDEX_VERSION = 2;
 const MEDIA_INDEX_VERSION = 1;
