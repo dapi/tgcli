@@ -3,8 +3,10 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { fileURLToPath } from 'url';
+import readline from 'readline';
 
 import { acquireStoreLock, readStoreLock } from './store-lock.js';
+import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createServices } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
 
@@ -123,6 +125,52 @@ function readVersion() {
   } catch (error) {
     return '0.0.0';
   }
+}
+
+function promptInput(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise(resolve => {
+    rl.question(question, answer => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function getStoreConfig(storeDir) {
+  const { config } = loadConfig(storeDir);
+  const normalized = normalizeConfig(config ?? {});
+  const missing = validateConfig(normalized);
+  return { config: normalized, missing };
+}
+
+async function ensureStoreConfig(storeDir) {
+  const { config, missing } = getStoreConfig(storeDir);
+  if (missing.length === 0) {
+    return config;
+  }
+
+  const updated = { ...config };
+  if (!updated.apiId) {
+    updated.apiId = await promptInput('Telegram API ID: ');
+  }
+  if (!updated.apiHash) {
+    updated.apiHash = await promptInput('Telegram API hash: ');
+  }
+  if (!updated.phoneNumber) {
+    updated.phoneNumber = await promptInput('Telegram phone number (+...): ');
+  }
+
+  const normalized = normalizeConfig(updated);
+  const remaining = validateConfig(normalized);
+  if (remaining.length > 0) {
+    throw new Error('Missing tgcli configuration. Run "tgcli auth" to set credentials.');
+  }
+  saveConfig(storeDir, normalized);
+  return normalized;
 }
 
 function parseGlobalFlags(args) {
@@ -384,11 +432,20 @@ async function runAuth(globalFlags, args) {
     const storeDir = resolveStoreDir();
 
     if (subcommand === 'status') {
-      const { telegramClient, messageSyncService } = createServices({ storeDir });
+      const { config, missing } = getStoreConfig(storeDir);
+      if (missing.length > 0) {
+        if (globalFlags.json) {
+          writeJson({ authenticated: false, configured: false });
+        } else {
+          console.log('Not authenticated. Run `tgcli auth`.');
+        }
+        return;
+      }
+      const { telegramClient, messageSyncService } = createServices({ storeDir, config });
       try {
         const authenticated = await telegramClient.isAuthorized().catch(() => false);
         const search = messageSyncService.getSearchStatus();
-        const payload = { authenticated, ftsEnabled: search.enabled };
+        const payload = { authenticated, configured: true, ftsEnabled: search.enabled };
         if (globalFlags.json) {
           writeJson(payload);
         } else {
@@ -402,8 +459,18 @@ async function runAuth(globalFlags, args) {
     }
 
     if (subcommand === 'logout') {
+      const { missing } = getStoreConfig(storeDir);
+      if (missing.length > 0) {
+        if (globalFlags.json) {
+          writeJson({ loggedOut: false, configured: false });
+        } else {
+          console.log('Not authenticated.');
+        }
+        return;
+      }
       const release = acquireStoreLock(storeDir);
-      const { telegramClient, messageSyncService } = createServices({ storeDir });
+      const config = await ensureStoreConfig(storeDir);
+      const { telegramClient, messageSyncService } = createServices({ storeDir, config });
       try {
         await telegramClient.login();
         await telegramClient.client.logout();
@@ -421,7 +488,8 @@ async function runAuth(globalFlags, args) {
     }
 
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const config = await ensureStoreConfig(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir, config });
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
@@ -546,6 +614,11 @@ async function runServer(globalFlags) {
       reject(new Error(`Server exited with code ${code ?? 'null'}${signal ? ` (${signal})` : ''}`));
     });
   });
+
+  const { missing } = getStoreConfig(resolveStoreDir());
+  if (missing.length > 0) {
+    throw new Error('Not authenticated. Run "tgcli auth" to configure credentials.');
+  }
 
   return runWithTimeout(runChild, timeoutMs, () => {
     if (child && !child.killed) {

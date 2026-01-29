@@ -53,17 +53,9 @@ npm install
 
 There are two separate configurations that need to be set up:
 
-1. **MCP Server Configuration:**
+1. **Telegram Credentials (tgcli store):**
 
-   Configure the Telegram MCP server using environment variables set in your shell or system service:
-
-   ```bash
-   export TELEGRAM_API_ID=YOUR_API_ID
-   export TELEGRAM_API_HASH=YOUR_API_HASH
-   export TELEGRAM_PHONE_NUMBER=YOUR_PHONE_NUMBER_WITH_COUNTRY_CODE # e.g., +15551234567
-   ```
-
-   Replace the placeholder values with your actual credentials.
+   Run `tgcli auth` and enter your API ID, API hash, and phone number. The credentials are saved to `config.json` inside the tgcli store directory.
 
 2. **MCP Client Configuration:**
 
@@ -101,6 +93,7 @@ Override the location with `TGCLI_STORE`.
 ## Running the Server
 
 ```bash
+tgcli auth
 tgcli server
 ```
 

@@ -2,6 +2,7 @@ import path from 'path';
 
 import TelegramClient from '../telegram-client.js';
 import MessageSyncService from '../message-sync-service.js';
+import { loadConfig, normalizeConfig, validateConfig } from './config.js';
 import { resolveStorePaths } from './store.js';
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -22,10 +23,17 @@ export function createServices(options = {}) {
     throw new Error('sessionPath and dbPath are required.');
   }
 
+  const loadedConfig = options.config ?? (resolvedStoreDir ? loadConfig(resolvedStoreDir).config : null);
+  const config = normalizeConfig(loadedConfig ?? {});
+  const missing = validateConfig(config);
+  if (missing.length > 0) {
+    throw new Error('Missing tgcli configuration. Run "tgcli auth" to set credentials.');
+  }
+
   const telegramClient = new TelegramClient(
-    process.env.TELEGRAM_API_ID,
-    process.env.TELEGRAM_API_HASH,
-    process.env.TELEGRAM_PHONE_NUMBER,
+    config.apiId,
+    config.apiHash,
+    config.phoneNumber,
     sessionPath,
   );
 

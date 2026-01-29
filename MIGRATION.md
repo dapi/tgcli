@@ -15,6 +15,10 @@ This guide covers the breaking changes when moving from the legacy frogiverse bu
 - Override with `TGCLI_STORE`.
 - The `--store` CLI flag is removed. Use `TGCLI_STORE` instead.
 
+## Credentials storage
+- Telegram credentials now live in `config.json` inside the tgcli store.
+- `.env` loading is removed; use `tgcli auth` to set credentials.
+
 If you have an existing `./data` store, you can either:
 - Move it into the new tgcli store directory, or
 - Keep it in place and set `TGCLI_STORE=./data`.

@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import { loadConfig, validateConfig } from "./core/config.js";
 import { createServices } from "./core/services.js";
 import { resolveStoreDir } from "./core/store.js";
 
@@ -12,7 +13,13 @@ const HOST = process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
 
 const storeDir = resolveStoreDir();
-const { telegramClient, messageSyncService } = createServices({ storeDir });
+const { config, path: configPath } = loadConfig(storeDir);
+const missingConfig = validateConfig(config ?? {});
+if (missingConfig.length > 0) {
+  console.error(`[startup] Missing tgcli configuration at ${configPath}. Run "tgcli auth".`);
+  process.exit(1);
+}
+const { telegramClient, messageSyncService } = createServices({ storeDir, config });
 
 let telegramReady = false;
 
