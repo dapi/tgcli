@@ -1,19 +1,13 @@
 #!/usr/bin/env node
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import dotenv from 'dotenv';
 
-import TelegramClient from './telegram-client.js';
-import MessageSyncService from './message-sync-service.js';
 import { acquireStoreLock, readStoreLock } from './store-lock.js';
+import { createServices } from './core/services.js';
+import { resolveStoreDir } from './core/store.js';
 
 dotenv.config();
-
-const DEFAULT_STORE_DIR = process.env.FROGIVERSE_STORE
-  ? path.resolve(process.env.FROGIVERSE_STORE)
-  : path.join(os.homedir(), '.frogiverse');
 
 function printUsage() {
   const text = `frogiverse CLI\n\n` +
@@ -354,28 +348,6 @@ function normalizeInviteCode(value) {
   return `https://t.me/joinchat/${trimmed}`;
 }
 
-function resolveStoreDir(storeOverride) {
-  return storeOverride ? path.resolve(storeOverride) : DEFAULT_STORE_DIR;
-}
-
-function createServices(storeDir) {
-  const sessionPath = path.join(storeDir, 'session.json');
-  const dbPath = path.join(storeDir, 'messages.db');
-  const telegramClient = new TelegramClient(
-    process.env.TELEGRAM_API_ID,
-    process.env.TELEGRAM_API_HASH,
-    process.env.TELEGRAM_PHONE_NUMBER,
-    sessionPath,
-  );
-  const messageSyncService = new MessageSyncService(telegramClient, {
-    dbPath,
-    batchSize: 100,
-    interJobDelayMs: 3000,
-    interBatchDelayMs: 1200,
-  });
-  return { telegramClient, messageSyncService };
-}
-
 async function withShutdown(handler) {
   let stopping = false;
   const stop = async () => {
@@ -420,7 +392,7 @@ async function runAuth(globalFlags, args) {
     const storeDir = resolveStoreDir(globalFlags.store);
 
     if (subcommand === 'status') {
-      const { telegramClient, messageSyncService } = createServices(storeDir);
+      const { telegramClient, messageSyncService } = createServices({ storeDir });
       try {
         const authenticated = await telegramClient.isAuthorized().catch(() => false);
         const search = messageSyncService.getSearchStatus();
@@ -439,7 +411,7 @@ async function runAuth(globalFlags, args) {
 
     if (subcommand === 'logout') {
       const release = acquireStoreLock(storeDir);
-      const { telegramClient, messageSyncService } = createServices(storeDir);
+      const { telegramClient, messageSyncService } = createServices({ storeDir });
       try {
         await telegramClient.login();
         await telegramClient.client.logout();
@@ -457,7 +429,7 @@ async function runAuth(globalFlags, args) {
     }
 
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
@@ -501,7 +473,7 @@ async function runSync(globalFlags, args) {
     });
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
     const idleExitMs = parseDuration(flags['idle-exit'] || '30s');
     const follow = flags.follow || !flags.once;
 
@@ -548,7 +520,7 @@ async function runSyncStatus(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir(globalFlags.store);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const queue = messageSyncService.getQueueStats();
       if (globalFlags.json) {
@@ -585,7 +557,7 @@ async function runSyncJobs(globalFlags, args) {
         throw new Error(`Unknown status: ${status}`);
       }
       const limit = parsePositiveInt(flags.limit, '--limit') ?? 100;
-      const { telegramClient, messageSyncService } = createServices(storeDir);
+      const { telegramClient, messageSyncService } = createServices({ storeDir });
       try {
         const jobs = messageSyncService.listJobs({
           status,
@@ -608,7 +580,7 @@ async function runSyncJobs(globalFlags, args) {
     }
 
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (mode === 'add') {
         const { flags } = parseFlags(rest, {
@@ -710,7 +682,7 @@ async function runDoctor(globalFlags, args) {
     });
     const storeDir = resolveStoreDir(globalFlags.store);
     const lock = readStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       let authenticated = false;
       let connected = false;
@@ -766,7 +738,7 @@ async function runChannels(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (mode === 'list') {
@@ -881,7 +853,7 @@ async function runMessages(globalFlags, args) {
 
   const storeDir = resolveStoreDir(globalFlags.store);
   const release = acquireStoreLock(storeDir);
-  const { telegramClient, messageSyncService } = createServices(storeDir);
+  const { telegramClient, messageSyncService } = createServices({ storeDir });
 
   const resolveLiveMetadata = async (channelId, fallback = {}) => {
     const meta = messageSyncService.getChannelMetadata(channelId);
@@ -1266,7 +1238,7 @@ async function runSend(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -1362,7 +1334,7 @@ async function runMedia(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -1395,7 +1367,7 @@ async function runTopics(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -1472,7 +1444,7 @@ async function runTags(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (mode === 'set') {
@@ -1593,7 +1565,7 @@ async function runMetadata(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (mode === 'get') {
@@ -1674,7 +1646,7 @@ async function runContacts(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (mode === 'search') {
@@ -1848,7 +1820,7 @@ async function runGroups(globalFlags, args) {
 
     const storeDir = resolveStoreDir(globalFlags.store);
     const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {

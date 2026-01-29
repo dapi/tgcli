@@ -18,6 +18,7 @@
   },
   "files": [
     "cli.js",
+    "core",
     "message-sync-service.js",
     "mcp-server.js",
     "store-lock.js",

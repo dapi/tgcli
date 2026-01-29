@@ -6,27 +6,16 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import dotenv from "dotenv";
 import { z } from "zod";
 
-import TelegramClient from "./telegram-client.js";
-import MessageSyncService from "./message-sync-service.js";
+import { createServices } from "./core/services.js";
+import { resolveStoreDir } from "./core/store.js";
 
 dotenv.config();
 
 const HOST = process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
 
-const telegramClient = new TelegramClient(
-  process.env.TELEGRAM_API_ID,
-  process.env.TELEGRAM_API_HASH,
-  process.env.TELEGRAM_PHONE_NUMBER,
-  "./data/session.json",
-);
-
-const messageSyncService = new MessageSyncService(telegramClient, {
-  dbPath: "./data/messages.db",
-  batchSize: 100,
-  interJobDelayMs: 3000,
-  interBatchDelayMs: 1200,
-});
+const storeDir = resolveStoreDir(null, { defaultDir: "./data" });
+const { telegramClient, messageSyncService } = createServices({ storeDir });
 
 let telegramReady = false;
 
