@@ -443,13 +443,27 @@ async function runAuth(globalFlags, args) {
       }
       const { telegramClient, messageSyncService } = createServices({ storeDir, config });
       try {
-        const authenticated = await telegramClient.isAuthorized().catch(() => false);
+        const me = await telegramClient.getCurrentUser();
+        const authenticated = Boolean(me);
         const search = messageSyncService.getSearchStatus();
-        const payload = { authenticated, configured: true, ftsEnabled: search.enabled };
+        const username = me?.username ? `@${me.username}` : null;
+        const payload = {
+          authenticated,
+          configured: true,
+          phoneNumber: config.phoneNumber || null,
+          username: me?.username ?? null,
+          ftsEnabled: search.enabled,
+        };
         if (globalFlags.json) {
           writeJson(payload);
         } else {
-          console.log(authenticated ? 'Authenticated.' : 'Not authenticated.');
+          if (!authenticated) {
+            console.log('Not authenticated. Run `tgcli auth`.');
+          } else if (username) {
+            console.log(`Authenticated as ${config.phoneNumber} (${username}).`);
+          } else {
+            console.log(`Authenticated as ${config.phoneNumber}.`);
+          }
         }
       } finally {
         await messageSyncService.shutdown();

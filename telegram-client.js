@@ -324,6 +324,17 @@ class TelegramClient {
     return this._isAuthorized();
   }
 
+  async getCurrentUser() {
+    try {
+      return await this.client.getMe();
+    } catch (error) {
+      if (this._isUnauthorizedError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async _askQuestion(prompt) {
     const rl = readline.createInterface({
       input: process.stdin,
