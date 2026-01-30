@@ -395,6 +395,37 @@ function writeError(error, asJson) {
   }
 }
 
+function supportsColorOutput() {
+  if (process.env.NO_COLOR) {
+    return false;
+  }
+  return Boolean(process.stdout.isTTY);
+}
+
+function colorizeNote(message) {
+  if (!supportsColorOutput()) {
+    return message;
+  }
+  return `\x1b[33m${message}\x1b[0m`;
+}
+
+function printArchiveFallbackNote(channelIds) {
+  if (!channelIds?.length) {
+    return;
+  }
+  const prefix = 'Note:';
+  if (channelIds.length === 1) {
+    const id = channelIds[0];
+    const message = `${prefix} no archived messages for ${id}. Showing live results. ` +
+      `Enable archive with: tgcli channels sync --chat ${id} --enable`;
+    console.log(colorizeNote(message));
+    return;
+  }
+  const message = `${prefix} no archived messages for chats: ${channelIds.join(', ')}. ` +
+    'Showing live results. Enable archive with: tgcli channels sync --chat <id> --enable';
+  console.log(colorizeNote(message));
+}
+
 function parseDuration(value) {
   if (typeof value !== 'string' || !value.trim()) {
     return null;
@@ -585,6 +616,56 @@ function formatLiveMessage(message, context) {
     media: message.media ?? null,
     topicId: message.topic_id ?? null,
   };
+}
+
+function getMessageSenderLabel(message) {
+  return message.fromDisplayName || message.fromUsername || message.fromId || null;
+}
+
+function groupMessagesByChannel(messages) {
+  const groups = new Map();
+  for (const message of messages) {
+    const channelId = message.channelId ?? 'unknown';
+    const key = String(channelId);
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        channelId: key,
+        peerTitle: message.peerTitle ?? null,
+        username: message.username ?? null,
+        messages: [],
+      };
+      groups.set(key, group);
+    } else {
+      if (!group.peerTitle && message.peerTitle) {
+        group.peerTitle = message.peerTitle;
+      }
+      if (!group.username && message.username) {
+        group.username = message.username;
+      }
+    }
+    group.messages.push(message);
+  }
+  return Array.from(groups.values());
+}
+
+function formatPeerHeaderLabel(group) {
+  const title = typeof group.peerTitle === 'string' ? group.peerTitle.trim() : '';
+  let username = typeof group.username === 'string' ? group.username.trim() : '';
+  if (username.startsWith('@')) {
+    username = username.slice(1);
+  }
+  const handle = username ? `@${username}` : '';
+  if (title) {
+    if (handle && !title.includes(handle)) {
+      return `"${title}" (${handle})`;
+    }
+    return `"${title}"`;
+  }
+  if (handle) {
+    return `${handle}`;
+  }
+  return group.channelId || 'unknown';
 }
 
 function messageDateMs(message) {
@@ -1221,40 +1302,36 @@ async function runMessagesList(globalFlags, options = {}) {
       const channelIds = parseListValues(options.chat);
       const topicId = parsePositiveInt(options.topic, '--topic');
       const finalLimit = parsePositiveInt(options.limit, '--limit') ?? 50;
-      const sets = [];
+      let archivedResults = [];
+      let liveResults = [];
+      let usedLiveFallback = false;
+      let authChecked = false;
 
-      if (resolvedSource === 'archive' || resolvedSource === 'both') {
-        const archived = messageSyncService.listArchivedMessages({
-          channelIds: channelIds.length ? channelIds : null,
-          topicId,
-          fromDate: options.after,
-          toDate: options.before,
-          limit: finalLimit,
-        });
-        sets.push(archived.map((message) => ({ ...message, source: 'archive' })));
-      }
-
-      if (resolvedSource === 'live' || resolvedSource === 'both') {
-        if (!channelIds.length) {
-          throw new Error('--chat is required for live source.');
+      const ensureAuthorized = async () => {
+        if (authChecked) {
+          return;
         }
         if (!(await telegramClient.isAuthorized().catch(() => false))) {
           throw new Error('Not authenticated. Run `node cli.js auth` first.');
         }
+        authChecked = true;
+      };
 
-        const liveResults = [];
-        for (const id of channelIds) {
+      const fetchLiveMessages = async (liveChannelIds) => {
+        await ensureAuthorized();
+        const results = [];
+        for (const id of liveChannelIds) {
           let peerTitle = null;
           let username = null;
           let liveMessages = [];
 
           if (topicId) {
-            const results = await telegramClient.getTopicMessages(id, topicId, finalLimit);
-            liveMessages = results.messages;
+            const response = await telegramClient.getTopicMessages(id, topicId, finalLimit);
+            liveMessages = response.messages;
           } else {
-            const results = await telegramClient.getMessagesByChannelId(id, finalLimit);
-            liveMessages = results.messages;
-            peerTitle = results.peerTitle ?? null;
+            const response = await telegramClient.getMessagesByChannelId(id, finalLimit);
+            liveMessages = response.messages;
+            peerTitle = response.peerTitle ?? null;
           }
 
           const meta = await resolveLiveMetadata(id, { peerTitle, username });
@@ -1266,23 +1343,65 @@ async function runMessagesList(globalFlags, options = {}) {
             ...formatLiveMessage(message, { channelId: String(id), peerTitle, username }),
             source: 'live',
           }));
-          liveResults.push(...formatted);
+          results.push(...formatted);
         }
-        sets.push(liveResults);
+        return results;
+      };
+
+      if (resolvedSource === 'archive' || resolvedSource === 'both') {
+        const archived = messageSyncService.listArchivedMessages({
+          channelIds: channelIds.length ? channelIds : null,
+          topicId,
+          fromDate: options.after,
+          toDate: options.before,
+          limit: finalLimit,
+        });
+        archivedResults = archived.map((message) => ({ ...message, source: 'archive' }));
       }
 
-      const messages = resolvedSource === 'both'
-        ? mergeMessageSets(sets, finalLimit)
-        : (sets[0] ?? []);
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        if (!channelIds.length) {
+          throw new Error('--chat is required for live source.');
+        }
+        liveResults = await fetchLiveMessages(channelIds);
+      }
+
+      if (resolvedSource === 'archive' && archivedResults.length === 0 && channelIds.length) {
+        liveResults = await fetchLiveMessages(channelIds);
+        usedLiveFallback = true;
+      }
+
+      let messages = [];
+      let outputSource = resolvedSource;
+      if (resolvedSource === 'both') {
+        messages = mergeMessageSets([archivedResults, liveResults], finalLimit);
+      } else if (resolvedSource === 'live' || usedLiveFallback) {
+        messages = liveResults;
+        outputSource = 'live';
+      } else {
+        messages = archivedResults;
+      }
 
       if (globalFlags.json) {
-        writeJson({ source: resolvedSource, returned: messages.length, messages });
+        writeJson({ source: outputSource, returned: messages.length, messages });
       } else {
-        for (const message of messages) {
-          const label = message.peerTitle || message.channelId || 'unknown';
-          const text = (message.text || '').replace(/\s+/g, ' ').trim();
-          const prefix = resolvedSource === 'both' ? `[${message.source}] ` : '';
-          console.log(`${prefix}${message.date ?? ''} ${label} #${message.messageId}: ${text}`);
+        const groups = groupMessagesByChannel(messages);
+        for (const group of groups) {
+          const label = formatPeerHeaderLabel(group);
+          const count = group.messages.length;
+          console.log(`Showing ${count} message${count === 1 ? '' : 's'} for ${label}:`);
+          for (const message of group.messages) {
+            const sender = getMessageSenderLabel(message) || 'unknown';
+            const text = (message.text || '').replace(/\s+/g, ' ').trim();
+            const prefix = outputSource === 'both' ? `[${message.source}] ` : '';
+            console.log(`${prefix}${message.date ?? ''} ${sender} #${message.messageId}: ${text}`);
+          }
+          if (groups.length > 1) {
+            console.log('');
+          }
+        }
+        if (usedLiveFallback) {
+          printArchiveFallbackNote(channelIds);
         }
       }
     } finally {
@@ -1316,24 +1435,22 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
         throw new Error('Provide query, regex, or tag for messages search.');
       }
 
-      const sets = [];
+      let archivedResults = [];
+      let liveResults = [];
+      let usedLiveFallback = false;
+      let authChecked = false;
 
-      if (resolvedSource === 'archive' || resolvedSource === 'both') {
-        const archived = messageSyncService.searchArchiveMessages({
-          query,
-          regex: options.regex,
-          tags: tagList.length ? tagList : null,
-          channelIds: channelIds.length ? channelIds : null,
-          topicId,
-          fromDate: options.after,
-          toDate: options.before,
-          limit: finalLimit,
-          caseInsensitive,
-        });
-        sets.push(archived.map((message) => ({ ...message, source: 'archive' })));
-      }
+      const ensureAuthorized = async () => {
+        if (authChecked) {
+          return;
+        }
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        authChecked = true;
+      };
 
-      if (resolvedSource === 'live' || resolvedSource === 'both') {
+      const buildLiveChannelIds = () => {
         let liveChannelIds = channelIds;
         if (!liveChannelIds.length && tagList.length) {
           const tagged = new Map();
@@ -1345,14 +1462,11 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
           }
           liveChannelIds = Array.from(tagged.keys());
         }
+        return liveChannelIds;
+      };
 
-        if (!liveChannelIds.length) {
-          throw new Error('--chat is required for live search.');
-        }
-        if (!(await telegramClient.isAuthorized().catch(() => false))) {
-          throw new Error('Not authenticated. Run `node cli.js auth` first.');
-        }
-
+      const fetchLiveResults = async (liveChannelIds) => {
+        await ensureAuthorized();
         let liveRegex = null;
         if (options.regex) {
           try {
@@ -1362,27 +1476,27 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
           }
         }
 
-        const liveResults = [];
+        const results = [];
         for (const id of liveChannelIds) {
           let peerTitle = null;
           let username = null;
           let liveMessages = [];
 
           if (query) {
-            const results = await telegramClient.searchChannelMessages(id, {
+            const response = await telegramClient.searchChannelMessages(id, {
               query,
               limit: finalLimit,
               topicId,
             });
-            liveMessages = results.messages;
-            peerTitle = results.peerTitle ?? null;
+            liveMessages = response.messages;
+            peerTitle = response.peerTitle ?? null;
           } else if (topicId) {
-            const results = await telegramClient.getTopicMessages(id, topicId, finalLimit);
-            liveMessages = results.messages;
+            const response = await telegramClient.getTopicMessages(id, topicId, finalLimit);
+            liveMessages = response.messages;
           } else {
-            const results = await telegramClient.getMessagesByChannelId(id, finalLimit);
-            liveMessages = results.messages;
-            peerTitle = results.peerTitle ?? null;
+            const response = await telegramClient.getMessagesByChannelId(id, finalLimit);
+            liveMessages = response.messages;
+            peerTitle = response.peerTitle ?? null;
           }
 
           const meta = await resolveLiveMetadata(id, { peerTitle, username });
@@ -1400,24 +1514,73 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
             ...formatLiveMessage(message, { channelId: String(id), peerTitle, username }),
             source: 'live',
           }));
-          liveResults.push(...formatted);
+          results.push(...formatted);
         }
+        return results;
+      };
 
-        sets.push(liveResults);
+      if (resolvedSource === 'archive' || resolvedSource === 'both') {
+        const archived = messageSyncService.searchArchiveMessages({
+          query,
+          regex: options.regex,
+          tags: tagList.length ? tagList : null,
+          channelIds: channelIds.length ? channelIds : null,
+          topicId,
+          fromDate: options.after,
+          toDate: options.before,
+          limit: finalLimit,
+          caseInsensitive,
+        });
+        archivedResults = archived.map((message) => ({ ...message, source: 'archive' }));
       }
 
-      const messages = resolvedSource === 'both'
-        ? mergeMessageSets(sets, finalLimit)
-        : (sets[0] ?? []);
+      if (resolvedSource === 'live' || resolvedSource === 'both') {
+        const liveChannelIds = buildLiveChannelIds();
+        if (!liveChannelIds.length) {
+          throw new Error('--chat is required for live search.');
+        }
+        liveResults = await fetchLiveResults(liveChannelIds);
+      }
+
+      if (resolvedSource === 'archive' && archivedResults.length === 0) {
+        const liveChannelIds = buildLiveChannelIds();
+        if (liveChannelIds.length) {
+          liveResults = await fetchLiveResults(liveChannelIds);
+          usedLiveFallback = true;
+        }
+      }
+
+      let messages = [];
+      let outputSource = resolvedSource;
+      if (resolvedSource === 'both') {
+        messages = mergeMessageSets([archivedResults, liveResults], finalLimit);
+      } else if (resolvedSource === 'live' || usedLiveFallback) {
+        messages = liveResults;
+        outputSource = 'live';
+      } else {
+        messages = archivedResults;
+      }
 
       if (globalFlags.json) {
-        writeJson({ source: resolvedSource, returned: messages.length, messages });
+        writeJson({ source: outputSource, returned: messages.length, messages });
       } else {
-        for (const message of messages) {
-          const label = message.peerTitle || message.channelId || 'unknown';
-          const text = (message.text || '').replace(/\s+/g, ' ').trim();
-          const prefix = resolvedSource === 'both' ? `[${message.source}] ` : '';
-          console.log(`${prefix}${message.date ?? ''} ${label} #${message.messageId}: ${text}`);
+        const groups = groupMessagesByChannel(messages);
+        for (const group of groups) {
+          const label = formatPeerHeaderLabel(group);
+          const count = group.messages.length;
+          console.log(`Showing ${count} message${count === 1 ? '' : 's'} for ${label}:`);
+          for (const message of group.messages) {
+            const sender = getMessageSenderLabel(message) || 'unknown';
+            const text = (message.text || '').replace(/\s+/g, ' ').trim();
+            const prefix = outputSource === 'both' ? `[${message.source}] ` : '';
+            console.log(`${prefix}${message.date ?? ''} ${sender} #${message.messageId}: ${text}`);
+          }
+          if (groups.length > 1) {
+            console.log('');
+          }
+        }
+        if (usedLiveFallback) {
+          printArchiveFallbackNote(buildLiveChannelIds());
         }
       }
     } finally {
@@ -1446,6 +1609,7 @@ async function runMessagesShow(globalFlags, options = {}) {
       const resolvedSource = resolveSource(options.source);
       let message = null;
       let resolvedFrom = null;
+      let usedLiveFallback = false;
 
       if (resolvedSource === 'live' || resolvedSource === 'both') {
         if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -1473,6 +1637,22 @@ async function runMessagesShow(globalFlags, options = {}) {
         }
       }
 
+      if (!message && resolvedSource === 'archive') {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const live = await telegramClient.getMessageById(options.chat, messageId);
+        if (live) {
+          const meta = await resolveLiveMetadata(options.chat);
+          message = {
+            ...formatLiveMessage(live, { channelId: String(options.chat), ...meta }),
+            source: 'live',
+          };
+          resolvedFrom = 'live';
+          usedLiveFallback = true;
+        }
+      }
+
       if (!message) {
         throw new Error('Message not found.');
       }
@@ -1482,6 +1662,9 @@ async function runMessagesShow(globalFlags, options = {}) {
         writeJson(payload);
       } else {
         console.log(JSON.stringify(payload, null, 2));
+        if (usedLiveFallback) {
+          printArchiveFallbackNote([options.chat]);
+        }
       }
     } finally {
       await messageSyncService.shutdown();
@@ -1511,6 +1694,7 @@ async function runMessagesContext(globalFlags, options = {}) {
       const safeAfter = parseNonNegativeInt(options.after, '--after') ?? 20;
       let context = null;
       let resolvedFrom = null;
+      let usedLiveFallback = false;
 
       if (resolvedSource === 'live' || resolvedSource === 'both') {
         if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -1557,6 +1741,35 @@ async function runMessagesContext(globalFlags, options = {}) {
         }
       }
 
+      if (!context && resolvedSource === 'archive') {
+        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const liveContext = await telegramClient.getMessageContext(options.chat, messageId, {
+          before: safeBefore,
+          after: safeAfter,
+        });
+        if (liveContext.target) {
+          const meta = await resolveLiveMetadata(options.chat);
+          context = {
+            target: {
+              ...formatLiveMessage(liveContext.target, { channelId: String(options.chat), ...meta }),
+              source: 'live',
+            },
+            before: liveContext.before.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(options.chat), ...meta }),
+              source: 'live',
+            })),
+            after: liveContext.after.map((message) => ({
+              ...formatLiveMessage(message, { channelId: String(options.chat), ...meta }),
+              source: 'live',
+            })),
+          };
+          resolvedFrom = 'live';
+          usedLiveFallback = true;
+        }
+      }
+
       if (!context) {
         throw new Error('Message not found.');
       }
@@ -1566,6 +1779,9 @@ async function runMessagesContext(globalFlags, options = {}) {
         writeJson(payload);
       } else {
         console.log(JSON.stringify(payload, null, 2));
+        if (usedLiveFallback) {
+          printArchiveFallbackNote([options.chat]);
+        }
       }
     } finally {
       await messageSyncService.shutdown();
