@@ -68,8 +68,8 @@ jobs:
           url = os.environ["TARBALL_URL"]
           sha = os.environ["SHA256"]
 
-          text = re.sub(r'^(\\s*url\\s+\").*(\")', r'\\1%s\\2' % url, text, flags=re.M)
-          text = re.sub(r'^(\\s*sha256\\s+\").*(\")', r'\\1%s\\2' % sha, text, flags=re.M)
+          text = re.sub(r'^(\s*url\s+\").*(\")', r'\1%s\2' % url, text, flags=re.M)
+          text = re.sub(r'^(\s*sha256\s+\").*(\")', r'\1%s\2' % sha, text, flags=re.M)
           path.write_text(text)
           PY
       - name: Commit and push
