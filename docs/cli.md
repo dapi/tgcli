@@ -8,6 +8,7 @@ CLI goal: human-readable output by default with --json for scripting.
 - --version
 
 Store location: OS app data dir (override with TGCLI_STORE).
+MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP).
 
 ## auth
 - auth
@@ -27,7 +28,14 @@ Store location: OS app data dir (override with TGCLI_STORE).
 
 ## server
 - server
-  - Start the MCP HTTP server.
+  - Start the background sync service (MCP HTTP server runs only when enabled in config).
+
+## service
+- service install
+- service start
+- service stop
+- service status
+- service logs
 
 ## doctor
 - doctor [--connect]
@@ -37,6 +45,7 @@ Store location: OS app data dir (override with TGCLI_STORE).
 - channels list [--limit] [--query]
 - channels show --chat <id|username>
 - channels sync --chat <id|username> --enable|--disable
+  - Enabling queues a backfill job; run `tgcli sync --once` or `tgcli sync --follow` to process it.
 
 ## topics (forum supergroups)
 - topics list --chat <id|username> [--limit]

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from 'fs';
-import { spawn } from 'child_process';
+import os from 'os';
+import path from 'path';
+import { spawn, spawnSync } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
@@ -10,6 +12,11 @@ import { acquireStoreLock, readStoreLock } from './store-lock.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createServices } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
+
+const CLI_PATH = fileURLToPath(import.meta.url);
+const SERVICE_STATE_FILE = 'service-state.json';
+const LAUNCHD_LABEL = 'com.kfastov.tgcli';
+const SYSTEMD_SERVICE_NAME = 'tgcli';
 
 const CLI_PROGRAM = buildProgram();
 
@@ -80,8 +87,30 @@ function buildProgram() {
 
   program
     .command('server')
-    .description('Run MCP server')
+    .description('Run background sync service (MCP optional)')
     .action(withGlobalOptions((globalFlags) => runServer(globalFlags)));
+
+  const service = program.command('service').description('Manage background service');
+  service
+    .command('install')
+    .description('Install service definition')
+    .action(withGlobalOptions((globalFlags) => runServiceInstall(globalFlags)));
+  service
+    .command('start')
+    .description('Start service')
+    .action(withGlobalOptions((globalFlags) => runServiceStart(globalFlags)));
+  service
+    .command('stop')
+    .description('Stop service')
+    .action(withGlobalOptions((globalFlags) => runServiceStop(globalFlags)));
+  service
+    .command('status')
+    .description('Show service status')
+    .action(withGlobalOptions((globalFlags) => runServiceStatus(globalFlags)));
+  service
+    .command('logs')
+    .description('Show service logs')
+    .action(withGlobalOptions((globalFlags) => runServiceLogs(globalFlags)));
 
   program
     .command('doctor')
@@ -417,12 +446,15 @@ function printArchiveFallbackNote(channelIds) {
   if (channelIds.length === 1) {
     const id = channelIds[0];
     const message = `${prefix} no archived messages for ${id}. Showing live results. ` +
-      `Enable archive with: tgcli channels sync --chat ${id} --enable`;
+      `To archive: tgcli channels sync --chat ${id} --enable; ` +
+      `tgcli sync jobs add --chat ${id}; ` +
+      'tgcli sync --once (or --follow).';
     console.log(colorizeNote(message));
     return;
   }
   const message = `${prefix} no archived messages for chats: ${channelIds.join(', ')}. ` +
-    'Showing live results. Enable archive with: tgcli channels sync --chat <id> --enable';
+    'Showing live results. To archive: tgcli channels sync --chat <id> --enable; ' +
+    'tgcli sync jobs add --chat <id>; tgcli sync --once (or --follow).';
   console.log(colorizeNote(message));
 }
 
@@ -442,6 +474,170 @@ function parseDuration(value) {
   if (unit === 'm') return amount * 60 * 1000;
   if (unit === 'h') return amount * 60 * 60 * 1000;
   return amount * 1000;
+}
+
+function runCommand(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    ...options,
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: result.error ?? null,
+  };
+}
+
+function getServiceStatePath(storeDir) {
+  return path.join(storeDir, SERVICE_STATE_FILE);
+}
+
+function readServiceState(storeDir) {
+  try {
+    const raw = fs.readFileSync(getServiceStatePath(storeDir), 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function getLaunchdPaths() {
+  const baseDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+  return {
+    plistPath: path.join(baseDir, `${LAUNCHD_LABEL}.plist`),
+    logPath: path.join(os.homedir(), 'Library', 'Logs', 'tgcli.log'),
+    errorLogPath: path.join(os.homedir(), 'Library', 'Logs', 'tgcli.error.log'),
+  };
+}
+
+function getSystemdPath() {
+  return path.join(os.homedir(), '.config', 'systemd', 'user', `${SYSTEMD_SERVICE_NAME}.service`);
+}
+
+function xmlEscape(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildLaunchdPlist({ nodePath, cliPath, envVars, logPath, errorLogPath }) {
+  const envEntries = Object.entries(envVars || {})
+    .map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(value)}</string>`)
+    .join('\n');
+  const envBlock = envEntries
+    ? `  <key>EnvironmentVariables</key>\n  <dict>\n${envEntries}\n  </dict>\n`
+    : '';
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    '<dict>',
+    `  <key>Label</key>`,
+    `  <string>${LAUNCHD_LABEL}</string>`,
+    '  <key>ProgramArguments</key>',
+    '  <array>',
+    `    <string>${xmlEscape(nodePath)}</string>`,
+    `    <string>${xmlEscape(cliPath)}</string>`,
+    '    <string>server</string>',
+    '  </array>',
+    envBlock.trimEnd(),
+    '  <key>RunAtLoad</key>',
+    '  <true/>',
+    '  <key>KeepAlive</key>',
+    '  <true/>',
+    `  <key>StandardOutPath</key>`,
+    `  <string>${xmlEscape(logPath)}</string>`,
+    `  <key>StandardErrorPath</key>`,
+    `  <string>${xmlEscape(errorLogPath)}</string>`,
+    '</dict>',
+    '</plist>',
+    '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+function buildSystemdService({ nodePath, cliPath, envVars }) {
+  const envLines = Object.entries(envVars || {}).map(
+    ([key, value]) => `Environment=${key}=${JSON.stringify(String(value))}`,
+  );
+  return [
+    '[Unit]',
+    'Description=tgcli background service',
+    'After=network-online.target',
+    '',
+    '[Service]',
+    `ExecStart=${nodePath} ${cliPath} server`,
+    'Restart=on-failure',
+    ...envLines,
+    '',
+    '[Install]',
+    'WantedBy=default.target',
+    '',
+  ].join('\n');
+}
+
+function parseBrewServicesList(output) {
+  const lines = output.split('\n').slice(1);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const [name, status] = line.trim().split(/\s+/);
+    if (name === 'tgcli') {
+      return { status };
+    }
+  }
+  return null;
+}
+
+function detectBrewService() {
+  const brewCheck = runCommand('brew', ['--version']);
+  if (brewCheck.status !== 0) {
+    return { available: false };
+  }
+  const list = runCommand('brew', ['list', '--formula', 'tgcli']);
+  if (list.status !== 0) {
+    return { available: true, installed: false };
+  }
+  const prefixResult = runCommand('brew', ['--prefix', 'tgcli']);
+  const brewPrefix = prefixResult.status === 0 ? prefixResult.stdout.trim() : null;
+  const cliPath = fs.realpathSync(CLI_PATH);
+  const brewCliMatch = brewPrefix ? cliPath.startsWith(path.join(brewPrefix, 'libexec')) : false;
+
+  const servicesResult = runCommand('brew', ['services', 'list']);
+  const serviceEntry = servicesResult.status === 0 ? parseBrewServicesList(servicesResult.stdout) : null;
+  const serviceAvailable = Boolean(serviceEntry);
+
+  return {
+    available: true,
+    installed: true,
+    brewPrefix,
+    brewCliMatch,
+    serviceAvailable,
+    serviceStatus: serviceEntry?.status ?? null,
+  };
+}
+
+function resolveServiceManager() {
+  const brewInfo = detectBrewService();
+  if (brewInfo.available && brewInfo.installed && brewInfo.serviceAvailable) {
+    return { manager: 'brew', brewInfo };
+  }
+  if (process.platform === 'darwin') {
+    return { manager: 'launchd', brewInfo };
+  }
+  if (process.platform === 'linux') {
+    const systemctlCheck = runCommand('systemctl', ['--user', '--version']);
+    if (systemctlCheck.status !== 0) {
+      return { manager: 'unsupported', brewInfo };
+    }
+    return { manager: 'systemd', brewInfo };
+  }
+  return { manager: 'unsupported', brewInfo };
 }
 
 function runWithTimeout(task, timeoutMs, onTimeout) {
@@ -959,6 +1155,333 @@ async function runServer(globalFlags) {
   });
 }
 
+async function runServiceInstall(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const { manager, brewInfo } = resolveServiceManager();
+    const envVars = {
+      TGCLI_SERVICE_MANAGER: manager,
+    };
+    if (process.env.TGCLI_STORE) {
+      envVars.TGCLI_STORE = process.env.TGCLI_STORE;
+    }
+
+    if (manager === 'brew') {
+      const note = brewInfo?.brewCliMatch
+        ? 'Brew service available. Use `tgcli service start`.'
+        : 'Brew service available, but current tgcli is not from brew.';
+      if (globalFlags.json) {
+        writeJson({ manager, installed: true, note });
+      } else {
+        console.log(note);
+      }
+      return;
+    }
+
+    if (manager === 'unsupported') {
+      throw new Error('Service install is supported only on macOS and Linux.');
+    }
+
+    if (manager === 'launchd') {
+      const { plistPath, logPath, errorLogPath } = getLaunchdPaths();
+      fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+      const content = buildLaunchdPlist({
+        nodePath: process.execPath,
+        cliPath: CLI_PATH,
+        envVars,
+        logPath,
+        errorLogPath,
+      });
+      fs.writeFileSync(plistPath, content, 'utf8');
+      if (globalFlags.json) {
+        writeJson({ manager, installed: true, path: plistPath });
+      } else {
+        console.log(`Service installed at ${plistPath}. Run \`tgcli service start\` to launch.`);
+      }
+      return;
+    }
+
+    if (manager === 'systemd') {
+      const servicePath = getSystemdPath();
+      fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+      const content = buildSystemdService({
+        nodePath: process.execPath,
+        cliPath: CLI_PATH,
+        envVars,
+      });
+      fs.writeFileSync(servicePath, content, 'utf8');
+      runCommand('systemctl', ['--user', 'daemon-reload']);
+      if (globalFlags.json) {
+        writeJson({ manager, installed: true, path: servicePath });
+      } else {
+        console.log(`Service installed at ${servicePath}. Run \`tgcli service start\` to launch.`);
+      }
+      return;
+    }
+  }, timeoutMs);
+}
+
+async function runServiceStart(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const { manager, brewInfo } = resolveServiceManager();
+
+    if (manager === 'brew') {
+      const result = runCommand('brew', ['services', 'start', 'tgcli'], { stdio: 'inherit' });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || 'Failed to start brew service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, started: true });
+      }
+      if (!brewInfo?.brewCliMatch && !globalFlags.json) {
+        console.log('Warning: brew-managed service may not match this tgcli binary.');
+      }
+      return;
+    }
+
+    if (manager === 'unsupported') {
+      throw new Error('Service start is supported only on macOS and Linux.');
+    }
+
+    if (manager === 'launchd') {
+      const { plistPath } = getLaunchdPaths();
+      if (!fs.existsSync(plistPath)) {
+        throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
+      }
+      const domain = `gui/${process.getuid()}`;
+      const result = runCommand('launchctl', ['bootstrap', domain, plistPath]);
+      if (result.status !== 0) {
+        throw new Error(result.stderr || 'Failed to start launchd service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, started: true });
+      } else {
+        console.log('Service started.');
+      }
+      return;
+    }
+
+    if (manager === 'systemd') {
+      const servicePath = getSystemdPath();
+      if (!fs.existsSync(servicePath)) {
+        throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
+      }
+      const result = runCommand('systemctl', ['--user', 'enable', '--now', SYSTEMD_SERVICE_NAME]);
+      if (result.status !== 0) {
+        throw new Error(result.stderr || 'Failed to start systemd service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, started: true });
+      } else {
+        console.log('Service started.');
+      }
+    }
+  }, timeoutMs);
+}
+
+async function runServiceStop(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const { manager } = resolveServiceManager();
+
+    if (manager === 'brew') {
+      const result = runCommand('brew', ['services', 'stop', 'tgcli'], { stdio: 'inherit' });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || 'Failed to stop brew service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, stopped: true });
+      }
+      return;
+    }
+
+    if (manager === 'unsupported') {
+      throw new Error('Service stop is supported only on macOS and Linux.');
+    }
+
+    if (manager === 'launchd') {
+      const { plistPath } = getLaunchdPaths();
+      if (!fs.existsSync(plistPath)) {
+        throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
+      }
+      const domain = `gui/${process.getuid()}`;
+      const result = runCommand('launchctl', ['bootout', domain, plistPath]);
+      if (result.status !== 0 && result.stderr.trim()) {
+        throw new Error(result.stderr || 'Failed to stop launchd service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, stopped: true });
+      } else {
+        console.log('Service stopped.');
+      }
+      return;
+    }
+
+    if (manager === 'systemd') {
+      const result = runCommand('systemctl', ['--user', 'stop', SYSTEMD_SERVICE_NAME]);
+      if (result.status !== 0) {
+        throw new Error(result.stderr || 'Failed to stop systemd service.');
+      }
+      if (globalFlags.json) {
+        writeJson({ manager, stopped: true });
+      } else {
+        console.log('Service stopped.');
+      }
+    }
+  }, timeoutMs);
+}
+
+async function runServiceStatus(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const { manager, brewInfo } = resolveServiceManager();
+    const storeDir = resolveStoreDir();
+    const serviceState = readServiceState(storeDir);
+    const cliVersion = readVersion();
+
+    let installed = false;
+    let running = false;
+    let pid = null;
+    let statusLabel = null;
+
+    if (manager === 'brew') {
+      installed = Boolean(brewInfo?.installed && brewInfo.serviceAvailable);
+      if (brewInfo?.serviceStatus) {
+        statusLabel = brewInfo.serviceStatus;
+        running = brewInfo.serviceStatus === 'started';
+      }
+    } else if (manager === 'launchd') {
+      const { plistPath } = getLaunchdPaths();
+      installed = fs.existsSync(plistPath);
+      const list = runCommand('launchctl', ['list']);
+      if (list.status === 0) {
+        const lines = list.stdout.split('\n');
+        for (const line of lines) {
+          if (!line.includes(LAUNCHD_LABEL)) continue;
+          const parts = line.trim().split(/\s+/);
+          const pidValue = parts[0];
+          pid = pidValue && pidValue !== '-' ? Number(pidValue) : null;
+          running = Boolean(pid);
+          statusLabel = running ? 'started' : 'stopped';
+          break;
+        }
+      }
+    } else if (manager === 'systemd') {
+      const servicePath = getSystemdPath();
+      installed = fs.existsSync(servicePath);
+      const active = runCommand('systemctl', ['--user', 'is-active', SYSTEMD_SERVICE_NAME]);
+      running = active.status === 0 && active.stdout.trim() === 'active';
+      statusLabel = active.stdout.trim();
+    } else {
+      statusLabel = 'unsupported';
+    }
+
+    const serviceVersion = serviceState?.version ?? null;
+    const versionMismatch = serviceVersion && cliVersion && serviceVersion !== cliVersion;
+    const resolvedPid = running ? (pid ?? serviceState?.pid ?? null) : null;
+    const output = {
+      manager,
+      installed,
+      running,
+      status: statusLabel,
+      pid: resolvedPid,
+      serviceVersion,
+      cliVersion,
+      storeDir,
+      mcpEnabled: serviceState?.mcpEnabled ?? null,
+    };
+
+    if (globalFlags.json) {
+      writeJson({
+        ...output,
+        versionMismatch,
+        brewCliMatch: brewInfo?.brewCliMatch ?? null,
+      });
+      return;
+    }
+
+    console.log(`Manager: ${manager}`);
+    console.log(`Installed: ${installed ? 'yes' : 'no'}`);
+    console.log(`Running: ${running ? 'yes' : 'no'}`);
+    if (statusLabel) {
+      console.log(`Status: ${statusLabel}`);
+    }
+    if (output.pid) {
+      console.log(`PID: ${output.pid}`);
+    }
+    if (serviceVersion) {
+      console.log(`Service version: ${serviceVersion}`);
+    }
+    console.log(`CLI version: ${cliVersion}`);
+    console.log(`Store: ${storeDir}`);
+    if (serviceState && serviceState.mcpEnabled !== null && serviceState.mcpEnabled !== undefined) {
+      console.log(`MCP enabled: ${serviceState.mcpEnabled ? 'yes' : 'no'}`);
+    }
+    if (versionMismatch) {
+      console.log('Warning: service version differs from CLI. Run `tgcli doctor`.');
+    }
+    if (manager === 'brew' && brewInfo && brewInfo.brewCliMatch === false) {
+      console.log('Warning: brew-managed service may not match this tgcli binary.');
+    }
+  }, timeoutMs);
+}
+
+async function runServiceLogs(globalFlags) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const { manager } = resolveServiceManager();
+
+    if (manager === 'brew') {
+      const info = runCommand('brew', ['services', 'info', 'tgcli']);
+      if (info.status !== 0) {
+        throw new Error(info.stderr || 'Failed to read brew service info.');
+      }
+      const match = info.stdout.match(/Log:\s+(.+)/i);
+      const logPath = match ? match[1].trim() : null;
+      if (globalFlags.json) {
+        writeJson({ manager, logPath });
+        return;
+      }
+      if (logPath && fs.existsSync(logPath)) {
+        runCommand('tail', ['-n', '200', logPath], { stdio: 'inherit' });
+      } else {
+        process.stdout.write(info.stdout);
+      }
+      return;
+    }
+
+    if (manager === 'launchd') {
+      const { logPath, errorLogPath } = getLaunchdPaths();
+      if (globalFlags.json) {
+        writeJson({ manager, logPath, errorLogPath });
+        return;
+      }
+      if (fs.existsSync(logPath)) {
+        runCommand('tail', ['-n', '200', logPath], { stdio: 'inherit' });
+      } else if (fs.existsSync(errorLogPath)) {
+        runCommand('tail', ['-n', '200', errorLogPath], { stdio: 'inherit' });
+      } else {
+        console.log('No log file found.');
+      }
+      return;
+    }
+
+    if (manager === 'systemd') {
+      if (globalFlags.json) {
+        writeJson({ manager, journal: true });
+        return;
+      }
+      runCommand('journalctl', ['--user', '-u', SYSTEMD_SERVICE_NAME, '-n', '200', '--no-pager'], {
+        stdio: 'inherit',
+      });
+      return;
+    }
+
+    throw new Error('Service logs are supported only on macOS and Linux.');
+  }, timeoutMs);
+}
+
 async function runSyncStatus(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -1260,13 +1783,39 @@ async function runChannelsSync(globalFlags, options = {}) {
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const result = messageSyncService.setChannelSync(options.chat, Boolean(options.enable));
+      let job = null;
+      let jobQueued = false;
+      if (options.enable) {
+        const existing = messageSyncService.listJobs({ channelId: options.chat, limit: 1 });
+        if (existing.length > 0) {
+          job = existing[0];
+        } else {
+          job = messageSyncService.addJob(options.chat);
+          jobQueued = true;
+        }
+      }
       if (globalFlags.json) {
         writeJson({
           channelId: result.channel_id,
           syncEnabled: Boolean(result.sync_enabled),
+          jobId: job?.id ?? null,
+          jobStatus: job?.status ?? null,
+          jobQueued,
         });
       } else {
-        console.log(`Sync ${result.sync_enabled ? 'enabled' : 'disabled'} for ${result.channel_id}`);
+        if (result.sync_enabled) {
+          const jobMessage = job
+            ? jobQueued
+              ? ` Backfill job queued (#${job.id}).`
+              : ` Backfill job exists (#${job.id}, ${job.status}).`
+            : '';
+          console.log(
+            `Sync enabled for ${result.channel_id}.${jobMessage} ` +
+              'Run `tgcli sync --once` (or `tgcli sync --follow`/`tgcli server`) to process.',
+          );
+        } else {
+          console.log(`Sync disabled for ${result.channel_id}`);
+        }
       }
     } finally {
       await messageSyncService.shutdown();

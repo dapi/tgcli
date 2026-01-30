@@ -15,14 +15,51 @@ function normalizeValue(value) {
   return String(value).trim();
 }
 
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+  return fallback;
+}
+
 export function normalizeConfig(raw = {}) {
   const apiId = normalizeValue(raw.apiId ?? raw.api_id ?? raw.apiID);
   const apiHash = normalizeValue(raw.apiHash ?? raw.api_hash);
   const phoneNumber = normalizeValue(raw.phoneNumber ?? raw.phone ?? raw.phone_number);
+  const mcpRaw = raw.mcp && typeof raw.mcp === 'object' ? raw.mcp : {};
+  const mcpEnabled = normalizeBoolean(raw.mcpEnabled ?? raw.mcp_enabled ?? mcpRaw.enabled, false);
+  const mcp = {
+    enabled: mcpEnabled,
+  };
+  const mcpHost = normalizeValue(mcpRaw.host ?? raw.mcpHost ?? raw.mcp_host);
+  if (mcpHost) {
+    mcp.host = mcpHost;
+  }
+  const mcpPortRaw = mcpRaw.port ?? raw.mcpPort ?? raw.mcp_port;
+  const mcpPort = Number(mcpPortRaw);
+  if (Number.isFinite(mcpPort) && mcpPort > 0) {
+    mcp.port = mcpPort;
+  }
   return {
     apiId,
     apiHash,
     phoneNumber,
+    mcp,
   };
 }
 

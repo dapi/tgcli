@@ -1,4 +1,6 @@
 import http from "http";
+import fs from "fs";
+import path from "path";
 import { randomUUID } from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -9,8 +11,7 @@ import { loadConfig, validateConfig } from "./core/config.js";
 import { createServices } from "./core/services.js";
 import { resolveStoreDir } from "./core/store.js";
 
-const HOST = process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
+const SERVICE_STATE_FILE = "service-state.json";
 
 const storeDir = resolveStoreDir();
 const { config, path: configPath } = loadConfig(storeDir);
@@ -19,9 +20,54 @@ if (missingConfig.length > 0) {
   console.error(`[startup] Missing tgcli configuration at ${configPath}. Run "tgcli auth".`);
   process.exit(1);
 }
+const mcpConfig = config?.mcp ?? {};
+const mcpEnabled = Boolean(mcpConfig.enabled);
+const resolvedHost = mcpConfig.host ?? process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
+const resolvedPort = Number(mcpConfig.port ?? process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
+const HOST = resolvedHost;
+const PORT = Number.isFinite(resolvedPort) && resolvedPort > 0 ? resolvedPort : 8080;
 const { telegramClient, messageSyncService } = createServices({ storeDir, config });
 
 let telegramReady = false;
+let serviceState = null;
+
+function readVersion() {
+  try {
+    const pkgPath = new URL("./package.json", import.meta.url);
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    return pkg.version || "0.0.0";
+  } catch (error) {
+    return "0.0.0";
+  }
+}
+
+function writeServiceState(nextState) {
+  if (!nextState) {
+    return;
+  }
+  try {
+    fs.mkdirSync(storeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(storeDir, SERVICE_STATE_FILE),
+      `${JSON.stringify(nextState, null, 2)}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    console.error(`[startup] Failed to write service state: ${error?.message ?? error}`);
+  }
+}
+
+function updateServiceState(patch) {
+  if (!serviceState) {
+    return;
+  }
+  serviceState = {
+    ...serviceState,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  writeServiceState(serviceState);
+}
 
 async function initializeTelegram() {
   if (telegramReady) return;
@@ -1834,71 +1880,87 @@ await initializeTelegram().catch((error) => {
   process.exit(1);
 });
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url ?? "", `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
+serviceState = {
+  pid: process.pid,
+  version: readVersion(),
+  manager: process.env.TGCLI_SERVICE_MANAGER ?? "manual",
+  startedAt: new Date().toISOString(),
+  mcpEnabled,
+  mcpHost: mcpEnabled ? HOST : null,
+  mcpPort: mcpEnabled ? PORT : null,
+};
+writeServiceState(serviceState);
 
-    if (req.method === "OPTIONS") {
-      res.writeHead(204).end();
-      return;
+let httpServer = null;
+if (mcpEnabled) {
+  httpServer = http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? "", `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204).end();
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" }).end(
+          JSON.stringify({ status: "ok" }),
+        );
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/mcp") {
+        await handlePost(req, res);
+        return;
+      }
+
+      if ((req.method === "GET" || req.method === "DELETE") && url.pathname === "/mcp") {
+        await handleSessionRequest(req, res);
+        return;
+      }
+
+      if (req.method === "POST") {
+        res.writeHead(404, { "Content-Type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32601,
+              message: "Endpoint not found",
+            },
+            id: null,
+          }),
+        );
+        return;
+      }
+
+      res.writeHead(405, { Allow: "GET, POST, DELETE" }).end();
+    } catch (error) {
+      console.error(`[http] unexpected error: ${error?.message ?? error}`);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32603,
+              message: "Internal server error",
+            },
+            id: null,
+          }),
+        );
+      }
     }
+  });
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(
-        JSON.stringify({ status: "ok" }),
-      );
-      return;
-    }
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`[startup] MCP HTTP server listening on http://${HOST}:${PORT}/mcp`);
+  });
 
-    if (req.method === "POST" && url.pathname === "/mcp") {
-      await handlePost(req, res);
-      return;
-    }
-
-    if ((req.method === "GET" || req.method === "DELETE") && url.pathname === "/mcp") {
-      await handleSessionRequest(req, res);
-      return;
-    }
-
-    if (req.method === "POST") {
-      res.writeHead(404, { "Content-Type": "application/json" }).end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: -32601,
-            message: "Endpoint not found",
-          },
-          id: null,
-        }),
-      );
-      return;
-    }
-
-    res.writeHead(405, { Allow: "GET, POST, DELETE" }).end();
-  } catch (error) {
-    console.error(`[http] unexpected error: ${error?.message ?? error}`);
-    if (!res.headersSent) {
-      res.writeHead(500, { "Content-Type": "application/json" }).end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal server error",
-          },
-          id: null,
-        }),
-      );
-    }
-  }
-});
-
-server.listen(PORT, HOST, () => {
-  console.log(`[startup] MCP HTTP server listening on http://${HOST}:${PORT}/mcp`);
-});
-
-server.on("error", (error) => {
-  console.error(`[http] server error: ${error.message}`);
-});
+  httpServer.on("error", (error) => {
+    console.error(`[http] server error: ${error.message}`);
+  });
+} else {
+  console.log("[startup] MCP disabled; running sync-only service.");
+}
 
 async function shutdown() {
   if (shuttingDown) {
@@ -1916,10 +1978,12 @@ async function shutdown() {
   if (closeTasks.length) {
     await Promise.allSettled(closeTasks);
   }
-  server.closeAllConnections?.();
-  server.close(() => {
-    console.log("[shutdown] HTTP server closed");
-  });
+  if (httpServer) {
+    httpServer.closeAllConnections?.();
+    httpServer.close(() => {
+      console.log("[shutdown] HTTP server closed");
+    });
+  }
 
   try {
     await messageSyncService.shutdown();
@@ -1932,6 +1996,11 @@ async function shutdown() {
   } catch (error) {
     console.error(`[shutdown] error while closing Telegram client: ${error?.message ?? error}`);
   }
+
+  updateServiceState({
+    stoppedAt: new Date().toISOString(),
+    pid: null,
+  });
 }
 
 process.on("SIGINT", () => {
