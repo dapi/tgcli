@@ -17,6 +17,14 @@ const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
 const LAUNCHD_LABEL = 'com.kfastov.tgcli';
 const SYSTEMD_SERVICE_NAME = 'tgcli';
+const CONFIG_SPECS = [
+  { key: 'apiId', path: ['apiId'], type: 'number' },
+  { key: 'apiHash', path: ['apiHash'], type: 'string', secret: true },
+  { key: 'phoneNumber', path: ['phoneNumber'], type: 'string' },
+  { key: 'mcp.enabled', path: ['mcp', 'enabled'], type: 'boolean' },
+  { key: 'mcp.host', path: ['mcp', 'host'], type: 'string' },
+  { key: 'mcp.port', path: ['mcp', 'port'], type: 'number' },
+];
 
 const CLI_PROGRAM = buildProgram();
 
@@ -45,6 +53,28 @@ function buildProgram() {
     .command('logout')
     .description('Log out of Telegram')
     .action(withGlobalOptions((globalFlags) => runAuthLogout(globalFlags)));
+
+  const config = program.command('config').description('View and edit config');
+  config
+    .command('list')
+    .description('List config values')
+    .action(withGlobalOptions((globalFlags) => runConfigList(globalFlags)));
+  config
+    .command('get')
+    .description('Get a config value')
+    .argument('<key>', 'Config key')
+    .action(withGlobalOptions((globalFlags, key) => runConfigGet(globalFlags, key)));
+  config
+    .command('set')
+    .description('Set a config value')
+    .argument('<key>', 'Config key')
+    .argument('<value>', 'Config value')
+    .action(withGlobalOptions((globalFlags, key, value) => runConfigSet(globalFlags, key, value)));
+  config
+    .command('unset')
+    .description('Unset a config value')
+    .argument('<key>', 'Config key')
+    .action(withGlobalOptions((globalFlags, key) => runConfigUnset(globalFlags, key)));
 
   const sync = program.command('sync').description('Archive backfill and realtime sync');
   sync
@@ -474,6 +504,135 @@ function parseDuration(value) {
   if (unit === 'm') return amount * 60 * 1000;
   if (unit === 'h') return amount * 60 * 60 * 1000;
   return amount * 1000;
+}
+
+function resolveConfigSpec(key) {
+  if (typeof key !== 'string' || !key.trim()) {
+    throw new Error('Config key is required.');
+  }
+  const normalized = key.trim().toLowerCase();
+  const spec = CONFIG_SPECS.find((entry) => entry.key.toLowerCase() === normalized);
+  if (!spec) {
+    const allowed = CONFIG_SPECS.map((entry) => entry.key).join(', ');
+    throw new Error(`Unknown config key "${key}". Supported keys: ${allowed}.`);
+  }
+  return spec;
+}
+
+function normalizeOutputValue(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === 'string' && !value.trim()) {
+    return null;
+  }
+  return value;
+}
+
+function maskSecret(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const str = String(value);
+  if (str.length <= 4) {
+    return '****';
+  }
+  return `${'*'.repeat(str.length - 4)}${str.slice(-4)}`;
+}
+
+function formatConfigValue(value) {
+  if (value === null || value === undefined) {
+    return 'unset';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  return String(value);
+}
+
+function getValueAtPath(target, pathParts) {
+  let current = target;
+  for (const part of pathParts) {
+    if (!current || typeof current !== 'object' || !(part in current)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function setValueAtPath(target, pathParts, value) {
+  let current = target;
+  for (let index = 0; index < pathParts.length - 1; index += 1) {
+    const part = pathParts[index];
+    if (!current[part] || typeof current[part] !== 'object') {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[pathParts[pathParts.length - 1]] = value;
+}
+
+function deleteValueAtPath(target, pathParts) {
+  let current = target;
+  for (let index = 0; index < pathParts.length - 1; index += 1) {
+    const part = pathParts[index];
+    if (!current || typeof current !== 'object') {
+      return;
+    }
+    current = current[part];
+  }
+  if (current && typeof current === 'object') {
+    delete current[pathParts[pathParts.length - 1]];
+  }
+}
+
+function parseBooleanValue(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+  throw new Error('Value must be boolean (true/false).');
+}
+
+function parseNumberValue(value, label) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number.`);
+  }
+  return parsed;
+}
+
+function parseStringValue(value, label) {
+  if (value === undefined || value === null) {
+    throw new Error(`${label} is required.`);
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  return trimmed;
+}
+
+function parseConfigValue(spec, rawValue) {
+  if (spec.type === 'boolean') {
+    return parseBooleanValue(rawValue);
+  }
+  if (spec.type === 'number') {
+    return parseNumberValue(rawValue, spec.key);
+  }
+  return parseStringValue(rawValue, spec.key);
 }
 
 function runCommand(command, args, options = {}) {
@@ -1054,6 +1213,79 @@ async function runAuthLogin(globalFlags, options = {}) {
       }
     }
   }, timeoutMs);
+}
+
+async function runConfigList(globalFlags) {
+  const storeDir = resolveStoreDir();
+  const { config } = loadConfig(storeDir);
+  const normalized = normalizeConfig(config ?? {});
+  const payload = {};
+  for (const spec of CONFIG_SPECS) {
+    let value = normalizeOutputValue(getValueAtPath(normalized, spec.path));
+    if (spec.secret) {
+      value = maskSecret(value);
+    }
+    payload[spec.key] = value;
+  }
+  if (globalFlags.json) {
+    writeJson(payload);
+    return;
+  }
+  for (const [key, value] of Object.entries(payload)) {
+    console.log(`${key}: ${formatConfigValue(value)}`);
+  }
+}
+
+async function runConfigGet(globalFlags, key) {
+  const storeDir = resolveStoreDir();
+  const spec = resolveConfigSpec(key);
+  const { config } = loadConfig(storeDir);
+  const normalized = normalizeConfig(config ?? {});
+  const value = normalizeOutputValue(getValueAtPath(normalized, spec.path));
+  if (globalFlags.json) {
+    writeJson({ key: spec.key, value });
+    return;
+  }
+  console.log(`${spec.key}: ${formatConfigValue(value)}`);
+}
+
+async function runConfigSet(globalFlags, key, value) {
+  const storeDir = resolveStoreDir();
+  const spec = resolveConfigSpec(key);
+  const parsedValue = parseConfigValue(spec, value);
+  const { config } = loadConfig(storeDir);
+  const next = normalizeConfig(config ?? {});
+  setValueAtPath(next, spec.path, parsedValue);
+  const { config: saved } = saveConfig(storeDir, next);
+  const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));
+  if (globalFlags.json) {
+    writeJson({ ok: true, key: spec.key, value: storedValue });
+    return;
+  }
+  console.log(`Updated ${spec.key}: ${formatConfigValue(storedValue)}`);
+}
+
+async function runConfigUnset(globalFlags, key) {
+  const storeDir = resolveStoreDir();
+  const spec = resolveConfigSpec(key);
+  const { config } = loadConfig(storeDir);
+  if (!config) {
+    if (globalFlags.json) {
+      writeJson({ ok: true, key: spec.key, value: null });
+    } else {
+      console.log(`${spec.key} already unset.`);
+    }
+    return;
+  }
+  const next = normalizeConfig(config ?? {});
+  deleteValueAtPath(next, spec.path);
+  const { config: saved } = saveConfig(storeDir, next);
+  const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));
+  if (globalFlags.json) {
+    writeJson({ ok: true, key: spec.key, value: storedValue });
+    return;
+  }
+  console.log(`Cleared ${spec.key}.`);
 }
 
 async function runSync(globalFlags, options = {}) {

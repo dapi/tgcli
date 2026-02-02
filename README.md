@@ -41,6 +41,7 @@ tgcli server
 
 ```bash
 tgcli auth           Authentication and session setup
+tgcli config         View and edit config
 tgcli sync           Archive backfill and realtime sync
 tgcli server         Run background sync service (MCP optional)
 tgcli service        Install/start/stop/status/logs for background service
@@ -60,15 +61,20 @@ Use `tgcli [command] --help` for details. Add `--json` for machine-readable outp
 
 ## MCP (optional)
 
-Enable it in `config.json` (inside the tgcli store):
+Enable it via config:
 
-```json
-{
-  "mcp": { "enabled": true }
-}
+```bash
+tgcli config set mcp.enabled true
 ```
 
-Then run `tgcli server` and point your client at `http://127.0.0.1:8080/mcp`.
+By default the server binds to `http://127.0.0.1:8080/mcp`. To change it:
+
+```bash
+tgcli config set mcp.host 127.0.0.1
+tgcli config set mcp.port 8080
+```
+
+Then run `tgcli server` and point your client at the configured address.
 
 ## Configuration & Store
 
