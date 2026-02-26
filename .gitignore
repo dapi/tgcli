@@ -133,3 +133,6 @@ backlog.md
 # Local caches
 .npm-cache/
 .private_/
+
+# Claude Code ctags index
+.claude/tags
