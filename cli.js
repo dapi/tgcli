@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import readline from 'readline';
 import { Command } from 'commander';
 
-import { acquireStoreLock, readStoreLock } from './store-lock.js';
+import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createServices } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
@@ -968,6 +968,7 @@ function formatLiveMessage(message, context) {
     fromPeerType: message.from_peer_type ?? null,
     fromIsBot: typeof message.from_is_bot === 'boolean' ? message.from_is_bot : null,
     text: message.text ?? message.message ?? '',
+    urls: message.urls ?? null,
     media: message.media ?? null,
     topicId: message.topic_id ?? null,
   };
@@ -1922,7 +1923,7 @@ async function runChannelsList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const limit = parsePositiveInt(options.limit, '--limit') ?? 50;
@@ -1956,7 +1957,7 @@ async function runChannelsShow(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       let channel = messageSyncService.getChannel(options.chat);
@@ -2075,7 +2076,7 @@ async function runMessagesList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
@@ -2197,7 +2198,7 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
@@ -2382,7 +2383,7 @@ async function runMessagesShow(globalFlags, options = {}) {
       throw new Error('--id is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
@@ -2465,7 +2466,7 @@ async function runMessagesContext(globalFlags, options = {}) {
       throw new Error('--id is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
@@ -2654,7 +2655,7 @@ async function runMediaDownload(globalFlags, options = {}) {
     const messageId = parsePositiveInt(options.id, '--id');
 
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -2685,7 +2686,7 @@ async function runTopicsList(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -2721,7 +2722,7 @@ async function runTopicsSearch(globalFlags, options = {}) {
       throw new Error('--query is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -2791,7 +2792,7 @@ async function runTagsList(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const tags = messageSyncService.listChannelTags(options.chat, { source: options.source });
@@ -2815,7 +2816,7 @@ async function runTagsSearch(globalFlags, options = {}) {
       throw new Error('--tag is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       const limit = parsePositiveInt(options.limit, '--limit') ?? 100;
@@ -2879,7 +2880,7 @@ async function runMetadataGet(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -2989,7 +2990,7 @@ async function runContactsShow(globalFlags, options = {}) {
       throw new Error('--user is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -3161,7 +3162,7 @@ async function runGroupsList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -3195,7 +3196,7 @@ async function runGroupsInfo(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {
@@ -3323,7 +3324,7 @@ async function runGroupInviteLinkGet(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
+    const release = acquireReadLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
 
     try {

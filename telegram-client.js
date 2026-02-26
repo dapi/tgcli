@@ -556,10 +556,47 @@ class TelegramClient {
     return results;
   }
 
-  async searchDialogs(keyword, limit = 100) {
+  async searchPeers(query, limit = 50) {
+    await this.ensureLogin();
+    const result = await this.client.call({
+      _: 'contacts.search',
+      q: query,
+      limit,
+    });
+    const results = [];
+    for (const chat of (result.chats || [])) {
+      results.push({
+        id: chat.id.toString(),
+        type: normalizePeerType(chat),
+        title: chat.title || chat.firstName || 'Unknown',
+        username: chat.username ?? null,
+        chatType: chat._ ?? null,
+        isForum: chat.forum ?? null,
+        isGroup: null,
+      });
+    }
+    for (const user of (result.users || [])) {
+      results.push({
+        id: user.id.toString(),
+        type: 'user',
+        title: [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Unknown',
+        username: user.username ?? null,
+        chatType: 'user',
+        isForum: null,
+        isGroup: null,
+      });
+    }
+    return results;
+  }
+
+  async searchDialogs(keyword, limit = 100, { local = false } = {}) {
     const query = sanitizeString(keyword).trim().toLowerCase();
     if (!query) {
       return [];
+    }
+
+    if (!local) {
+      return this.searchPeers(query, limit);
     }
 
     await this.ensureLogin();
@@ -1009,6 +1046,24 @@ class TelegramClient {
       textContent = message.text.toString();
     }
 
+    // Extract URLs from message entities (text_link and url kinds)
+    const urls = [];
+    const entities = message.entities;
+    if (Array.isArray(entities)) {
+      for (const entity of entities) {
+        try {
+          const kind = entity.kind;
+          if (kind === 'text_link') {
+            const url = entity.params?.url;
+            if (url) urls.push(url);
+          } else if (kind === 'url') {
+            const urlText = entity.text;
+            if (urlText) urls.push(urlText);
+          }
+        } catch {}
+      }
+    }
+
     const sender = message.sender || message.from || message.author;
     let senderId = sender?.id ? sender.id.toString() : null;
     if (!senderId) {
@@ -1039,6 +1094,7 @@ class TelegramClient {
       date: dateSeconds,
       message: textContent,
       text: textContent,
+      urls: urls.length > 0 ? urls : null,
       from_id: senderId,
       from_username: senderUsername,
       from_display_name: senderDisplayName,

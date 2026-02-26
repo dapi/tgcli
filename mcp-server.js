@@ -1875,6 +1875,9 @@ async function handleSessionRequest(req, res) {
   await record.transport.handleRequest(req, res);
 }
 
+// TODO: MCP server should participate in the store locking protocol.
+// Currently it opens the SQLite DB and Telegram session without any lock,
+// which can cause conflicts with concurrent CLI commands.
 await initializeTelegram().catch((error) => {
   console.error(`[startup] Telegram initialization failed: ${error?.message ?? error}`);
   process.exit(1);
