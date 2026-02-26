@@ -20,12 +20,13 @@ Use this skill when the user:
 ## Install
 
 ```bash
-npm install -g @kfastov/tgcli
+npx skills add dapi/tgcli --skill tgcli -y
 ```
 
-Or:
+CLI (your fork):
+
 ```bash
-brew install kfastov/tap/tgcli
+npm install -g github:dapi/tgcli
 ```
 
 ## Authentication
@@ -50,11 +51,13 @@ tgcli topics list --chat @channel --limit 20
 ```bash
 tgcli media download --chat @channel --id 12345
 tgcli send file --to @channel --file ./report.pdf --caption "FYI"
+tgcli send file --to @channel --file ./report.pdf --caption "<b>FYI</b>" --parse-mode html
 ```
 
 ### Writing
 ```bash
 tgcli send text --to @username --message "Hello"
+tgcli send text --to @username --message "**Hello**" --parse-mode markdown
 ```
 
 ### Sync & Service
@@ -84,3 +87,5 @@ tgcli channels list --limit 10 --json
 
 - Use `--source live|archive|both` when listing or searching messages.
 - `--json` is best for AI/tooling pipelines.
+- `--parse-mode` supports `markdown|html|none` (case-insensitive).
+- For `send file`, `--parse-mode` requires `--caption`.
