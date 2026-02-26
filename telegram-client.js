@@ -1,5 +1,7 @@
 import { TelegramClient as MtCuteClient } from '@mtcute/node';
 import { InputMedia } from '@mtcute/core';
+import { html } from '@mtcute/html-parser';
+import { md } from '@mtcute/markdown-parser';
 import EventEmitter from 'events';
 import fs from 'fs';
 import { stat } from 'fs/promises';
@@ -127,6 +129,27 @@ function createPlatform() {
 
 function sanitizeString(value) {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeParseMode(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!['markdown', 'html', 'none'].includes(normalized)) {
+    throw new Error('Invalid parse mode. Allowed values: markdown, html, none');
+  }
+  return normalized;
+}
+
+function applyParseMode(text, parseMode) {
+  if (parseMode === 'markdown') {
+    return md(text);
+  }
+  if (parseMode === 'html') {
+    return html(text);
+  }
+  return text;
 }
 
 function coerceApiId(value) {
@@ -773,12 +796,14 @@ class TelegramClient {
     if (!messageText.trim()) {
       throw new Error('Message text cannot be empty.');
     }
+    const parseMode = normalizeParseMode(options.parseMode);
+    const inputText = applyParseMode(messageText, parseMode);
     const replyTo = Number.isFinite(options.replyToMessageId)
       ? options.replyToMessageId
       : (Number.isFinite(options.topicId) ? options.topicId : undefined);
     const params = replyTo ? { replyTo } : undefined;
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendText(peerRef, messageText, params);
+    const sent = await this.client.sendText(peerRef, inputText, params);
     return { messageId: sent.id };
   }
 
@@ -795,13 +820,18 @@ class TelegramClient {
     const caption = typeof options.caption === 'string' && options.caption.trim()
       ? options.caption
       : undefined;
+    const parseMode = normalizeParseMode(options.parseMode);
+    if (parseMode && !caption) {
+      throw new Error('--parse-mode requires --caption for send file');
+    }
+    const parsedCaption = caption ? applyParseMode(caption, parseMode) : undefined;
     const fileName = typeof options.filename === 'string' && options.filename.trim()
       ? options.filename.trim()
       : undefined;
     const replyTo = Number.isFinite(options.topicId) ? options.topicId : undefined;
     const params = replyTo ? { replyTo } : undefined;
     const media = InputMedia.auto(uploadPath, {
-      caption,
+      caption: parsedCaption,
       fileName,
     });
     const peerRef = normalizeChannelId(channelId);
