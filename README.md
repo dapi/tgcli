@@ -12,6 +12,35 @@ npm install -g @kfastov/tgcli
 brew install kfastov/tap/tgcli
 ```
 
+## Skill Installation (for AI agents)
+
+Install `tgcli` skill from this GitHub repository:
+
+```bash
+npx skills add dapi/tgcli --skill tgcli -y
+```
+
+Install for all supported agents (recommended):
+
+```bash
+npx skills add dapi/tgcli --skill tgcli --agent '*' -y
+```
+
+Notes:
+- `npx skills add dapi/tgcli` installs the skill from GitHub, not from npm.
+- Restart your agent session after installation so the new skill is picked up.
+
+## Using the Skill
+
+After installation, ask your agent to perform Telegram tasks via `tgcli`, for example:
+
+```text
+List last 20 messages from @channel
+Search messages in @channel for "invoice"
+Send a message to @username with markdown parse mode
+Send ./report.pdf to @channel with HTML caption
+```
+
 ## Authentication
 
 Get Telegram API credentials:
