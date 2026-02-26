@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test script
+        run: npm test
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check cli.js
+          node --check telegram-client.js
+          node --check mcp-server.js
+          node --check message-sync-service.js
+
+      - name: Validate send parse-mode CLI behavior
+        run: |
+          node cli.js send text --help | grep -F -- "--parse-mode <mode>"
+          node cli.js send file --help | grep -F -- "--parse-mode <mode>"
+
+          if node cli.js send text --to @u --message "hi" --parse-mode "bad" > /tmp/tgcli-invalid-parse-mode.log 2>&1; then
+            echo "Expected invalid parse mode to fail"
+            cat /tmp/tgcli-invalid-parse-mode.log
+            exit 1
+          fi
+          grep -F -- "--parse-mode must be one of: markdown, html, none" /tmp/tgcli-invalid-parse-mode.log
+
+          if node cli.js send file --to @u --file ./README.md --parse-mode "html" > /tmp/tgcli-file-caption.log 2>&1; then
+            echo "Expected send file without --caption to fail when --parse-mode is set"
+            cat /tmp/tgcli-file-caption.log
+            exit 1
+          fi
+          grep -F -- "--parse-mode requires --caption for send file" /tmp/tgcli-file-caption.log

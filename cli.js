@@ -25,6 +25,7 @@ const CONFIG_SPECS = [
   { key: 'mcp.host', path: ['mcp', 'host'], type: 'string' },
   { key: 'mcp.port', path: ['mcp', 'port'], type: 'number' },
 ];
+const SEND_PARSE_MODES = ['markdown', 'html', 'none'];
 
 const CLI_PROGRAM = buildProgram();
 
@@ -220,6 +221,7 @@ function buildProgram() {
     .description('Send a text message')
     .option('--to <id|username>', 'Recipient id or username')
     .option('--message <text>', 'Message text')
+    .option('--parse-mode <mode>', 'Parse mode: markdown|html|none')
     .option('--topic <id>', 'Forum topic id')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
   send
@@ -228,6 +230,7 @@ function buildProgram() {
     .option('--to <id|username>', 'Recipient id or username')
     .option('--file <path>', 'File path')
     .option('--caption <text>', 'Optional caption')
+    .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
     .option('--filename <name>', 'Override filename')
     .option('--topic <id>', 'Forum topic id')
     .action(withGlobalOptions((globalFlags, options) => runSendFile(globalFlags, options)));
@@ -912,6 +915,17 @@ function parseListValues(value) {
     .flatMap((entry) => String(entry).split(','))
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function parseSendParseMode(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!SEND_PARSE_MODES.includes(normalized)) {
+    throw new Error(`--parse-mode must be one of: ${SEND_PARSE_MODES.join(', ')}`);
+  }
+  return normalized;
 }
 
 function resolveSource(source) {
@@ -2582,6 +2596,7 @@ async function runSendText(globalFlags, options = {}) {
     if (!options.message) {
       throw new Error('--message is required');
     }
+    const parseMode = parseSendParseMode(options.parseMode);
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
@@ -2590,7 +2605,10 @@ async function runSendText(globalFlags, options = {}) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
       const topicId = parsePositiveInt(options.topic, '--topic');
-      const result = await telegramClient.sendTextMessage(options.to, options.message, { topicId });
+      const result = await telegramClient.sendTextMessage(options.to, options.message, {
+        topicId,
+        parseMode,
+      });
       const payload = { channelId: options.to, ...result };
 
       if (globalFlags.json) {
@@ -2615,6 +2633,10 @@ async function runSendFile(globalFlags, options = {}) {
     if (!options.file) {
       throw new Error('--file is required');
     }
+    const parseMode = parseSendParseMode(options.parseMode);
+    if (parseMode && !(typeof options.caption === 'string' && options.caption.trim())) {
+      throw new Error('--parse-mode requires --caption for send file');
+    }
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
@@ -2627,6 +2649,7 @@ async function runSendFile(globalFlags, options = {}) {
         caption: options.caption,
         filename: options.filename,
         topicId,
+        parseMode,
       });
       const payload = { channelId: options.to, ...result };
 

@@ -58,8 +58,11 @@ MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP)
 - messages context --chat <id> --id <msgId> [--before N] [--after N] [--source]
 
 ## send
-- send text --to <id|username> --message "..." [--topic]
-- send file --to <id|username> --file PATH [--caption] [--filename]
+- send text --to <id|username> --message "..." [--parse-mode markdown|html|none] [--topic]
+- send file --to <id|username> --file PATH [--caption] [--filename] [--parse-mode markdown|html|none] [--topic]
+  - `--parse-mode` is case-insensitive on input.
+  - Allowed values: `markdown`, `html`, `none`.
+  - For `send file`, `--parse-mode` requires `--caption`.
 
 ## media
 - media download --chat <id|username> --id <msgId> [--output PATH]

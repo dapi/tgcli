@@ -34,6 +34,8 @@ tgcli sync --follow
 tgcli messages list --chat @username --limit 20
 tgcli messages search "course" --chat @channel --source archive
 tgcli send text --to @username --message "hello"
+tgcli send text --to @username --message "**hi**" --parse-mode markdown
+tgcli send file --to @channel --file ./report.pdf --caption "<b>weekly report</b>" --parse-mode html
 tgcli server
 ```
 
