@@ -714,7 +714,7 @@ class TelegramClient {
         id: message.id,
         date: dateSeconds,
       },
-      addOffset: -safeBefore,
+      addOffset: -safeAfter,
       limit: total,
     });
 
