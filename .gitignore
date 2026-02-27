@@ -136,3 +136,8 @@ backlog.md
 
 # Claude Code ctags index
 .claude/tags
+
+# Skills installer artifacts (npx skills add)
+.agents/
+skills/
+skills-lock.json
