@@ -1216,6 +1216,153 @@ class TelegramClient {
       messages,
     };
   }
+
+  async getFolders() {
+    await this.ensureLogin();
+    const result = await this.client.getFolders();
+    return result.filters.map((f) => {
+      if (f._ === 'dialogFilterDefault') return { id: 0, title: 'All Chats', type: 'default' };
+      return {
+        id: f.id,
+        title: typeof f.title === 'string' ? f.title : f.title.text,
+        emoji: f.emoticon ?? null,
+        color: f.color ?? null,
+        type: f._ === 'dialogFilterChatlist' ? 'chatlist' : 'filter',
+        contacts: f.contacts ?? false,
+        nonContacts: f.nonContacts ?? false,
+        groups: f.groups ?? false,
+        broadcasts: f.broadcasts ?? false,
+        bots: f.bots ?? false,
+        excludeMuted: f.excludeMuted ?? false,
+        excludeRead: f.excludeRead ?? false,
+        excludeArchived: f.excludeArchived ?? false,
+        includePeers: f.includePeers?.length ?? 0,
+        excludePeers: f.excludePeers?.length ?? 0,
+        pinnedPeers: f.pinnedPeers?.length ?? 0,
+      };
+    });
+  }
+
+  async findFolder(idOrName) {
+    await this.ensureLogin();
+    const id = Number(idOrName);
+    if (!isNaN(id)) return this.client.findFolder({ id });
+    return this.client.findFolder({ title: String(idOrName) });
+  }
+
+  async showFolder(idOrName) {
+    await this.ensureLogin();
+    const folder = await this.findFolder(idOrName);
+    if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    return {
+      id: folder.id,
+      title: typeof folder.title === 'string' ? folder.title : folder.title.text,
+      emoji: folder.emoticon ?? null,
+      color: folder.color ?? null,
+      type: folder._ === 'dialogFilterChatlist' ? 'chatlist' : 'filter',
+      contacts: folder.contacts ?? false,
+      nonContacts: folder.nonContacts ?? false,
+      groups: folder.groups ?? false,
+      broadcasts: folder.broadcasts ?? false,
+      bots: folder.bots ?? false,
+      excludeMuted: folder.excludeMuted ?? false,
+      excludeRead: folder.excludeRead ?? false,
+      excludeArchived: folder.excludeArchived ?? false,
+      includePeers: folder.includePeers ?? [],
+      excludePeers: folder.excludePeers ?? [],
+      pinnedPeers: folder.pinnedPeers ?? [],
+    };
+  }
+
+  async createFolder(options) {
+    await this.ensureLogin();
+    const params = { title: options.title };
+    if (options.emoji) params.emoticon = options.emoji;
+    if (options.contacts) params.contacts = true;
+    if (options.nonContacts) params.nonContacts = true;
+    if (options.groups) params.groups = true;
+    if (options.broadcasts) params.broadcasts = true;
+    if (options.bots) params.bots = true;
+    if (options.excludeMuted) params.excludeMuted = true;
+    if (options.excludeRead) params.excludeRead = true;
+    if (options.excludeArchived) params.excludeArchived = true;
+    if (options.includePeers?.length) params.includePeers = options.includePeers;
+    if (options.excludePeers?.length) params.excludePeers = options.excludePeers;
+    if (options.pinnedPeers?.length) params.pinnedPeers = options.pinnedPeers;
+    const result = await this.client.createFolder(params);
+    return { id: result.id, title: typeof result.title === 'string' ? result.title : result.title.text };
+  }
+
+  async editFolder(idOrName, modification) {
+    await this.ensureLogin();
+    const folder = await this.findFolder(idOrName);
+    if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    const mod = {};
+    if (modification.title !== undefined) mod.title = modification.title;
+    if (modification.emoji !== undefined) mod.emoticon = modification.emoji;
+    if (modification.contacts !== undefined) mod.contacts = modification.contacts;
+    if (modification.nonContacts !== undefined) mod.nonContacts = modification.nonContacts;
+    if (modification.groups !== undefined) mod.groups = modification.groups;
+    if (modification.broadcasts !== undefined) mod.broadcasts = modification.broadcasts;
+    if (modification.bots !== undefined) mod.bots = modification.bots;
+    if (modification.excludeMuted !== undefined) mod.excludeMuted = modification.excludeMuted;
+    if (modification.excludeRead !== undefined) mod.excludeRead = modification.excludeRead;
+    if (modification.excludeArchived !== undefined) mod.excludeArchived = modification.excludeArchived;
+    if (modification.includePeers !== undefined) mod.includePeers = modification.includePeers;
+    if (modification.excludePeers !== undefined) mod.excludePeers = modification.excludePeers;
+    if (modification.pinnedPeers !== undefined) mod.pinnedPeers = modification.pinnedPeers;
+    const result = await this.client.editFolder({ folder, modification: mod });
+    return { id: result.id, title: typeof result.title === 'string' ? result.title : result.title.text };
+  }
+
+  async deleteFolder(idOrName) {
+    await this.ensureLogin();
+    const folder = await this.findFolder(idOrName);
+    if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    await this.client.deleteFolder(folder.id);
+    return { deleted: true, id: folder.id };
+  }
+
+  async setFoldersOrder(ids) {
+    await this.ensureLogin();
+    await this.client.setFoldersOrder(ids.map(Number));
+    return { ok: true };
+  }
+
+  async addChatToFolder(idOrName, chatId) {
+    await this.ensureLogin();
+    const folder = await this.findFolder(idOrName);
+    if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    const peers = folder.includePeers ? [...folder.includePeers] : [];
+    peers.push(chatId);
+    await this.client.editFolder({ folder, modification: { includePeers: peers } });
+    return { ok: true, folderId: folder.id };
+  }
+
+  async removeChatFromFolder(idOrName, chatId) {
+    await this.ensureLogin();
+    const folder = await this.findFolder(idOrName);
+    if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    const chatIdStr = String(chatId);
+    const peers = (folder.includePeers ?? []).filter((p) => {
+      const peerId = typeof p === 'object' && p !== null
+        ? String(p.userId ?? p.channelId ?? p.chatId ?? '')
+        : String(p);
+      return peerId !== chatIdStr;
+    });
+    await this.client.editFolder({ folder, modification: { includePeers: peers } });
+    return { ok: true, folderId: folder.id };
+  }
+
+  async joinChatlist(link) {
+    await this.ensureLogin();
+    const result = await this.client.joinChatlist(link);
+    return {
+      id: result.id,
+      title: typeof result.title === 'string' ? result.title : result.title.text,
+      type: 'chatlist',
+    };
+  }
 }
 
 export default TelegramClient;
