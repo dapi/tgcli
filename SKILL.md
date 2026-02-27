@@ -3,8 +3,9 @@ name: tgcli
 description: >
   Use when user wants to read/search/send/analyze Telegram messages via tgcli CLI.
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
-  contacts, groups, and archive/sync status. For reply/edit/delete/reactions/inline buttons
-  or admin operations, use telegram-mcp instead.
+  contacts, groups, tags, media downloads, and archive/sync status.
+  Also covers group admin (rename, members, invite links, join/leave).
+  For reply/edit/delete/reactions/inline buttons, use telegram-mcp instead.
 ---
 
 # tgcli
@@ -34,12 +35,15 @@ tgcli auth
 ## Tool Boundary: tgcli vs telegram-mcp
 
 | Use tgcli for | Use telegram-mcp for |
-| - | - |
+|-|-|
 | Read/search/archive messages | reply/edit/delete/forward |
 | Send text/files and topic posts | reactions |
 | Forum topics listing/search | inline bot buttons |
-| Sync jobs and archive monitoring | admin actions |
-| JSON output for automation | advanced interactive actions |
+| Download media from messages | advanced interactive actions |
+| Group admin (rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
+| Channel/contact tags and metadata | |
+| Sync jobs and archive monitoring | |
+| JSON output for automation | |
 
 ## Execution Rules
 
@@ -57,6 +61,7 @@ tgcli auth
 
 ```bash
 tgcli messages list --chat <id|@username> --limit 50 --source archive --json --timeout 30s
+tgcli messages list --chat <id|@username> --topic <topicId> --after 2025-01-01T00:00:00Z --limit 100 --source archive --json --timeout 30s
 tgcli messages show --chat <id|@username> --id <msgId> --source archive --json --timeout 30s
 tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 --source archive --json --timeout 30s
 ```
@@ -64,9 +69,13 @@ tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 -
 ### Search
 
 ```bash
+tgcli messages search "Claude Code" --chat <id|@username> --source archive --json --timeout 30s
 tgcli messages search --query "Claude Code" --chat <id|@username> --source archive --json --timeout 30s
 tgcli messages search --regex "claude\\s+(code|agent)" --chat <id|@username> --source archive --json --timeout 30s
+tgcli messages search --tag ai --chat <id|@username> --source archive --json --timeout 30s
 ```
+
+Both positional query and `--query` flag work. Use `--regex` for pattern matching, `--tag` to filter by channel tags.
 
 ### Send Text/File
 
@@ -76,24 +85,107 @@ tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --pa
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
+tgcli send file --to <id|@username> --file /path/to/file --filename custom-name.pdf --json --timeout 30s
 ```
 
-### Channels, Topics, Contacts, Groups
+### Media Download
+
+```bash
+tgcli media download --chat <id|@username> --id <msgId> --json --timeout 30s
+tgcli media download --chat <id|@username> --id <msgId> --output /path/to/save --json --timeout 30s
+```
+
+### Channels
 
 ```bash
 tgcli channels list --query "ai" --limit 20 --json --timeout 30s
 tgcli channels show --chat <id|@username> --json --timeout 30s
+tgcli channels sync --chat <id|@username> --enable
+tgcli channels sync --chat <id|@username> --disable
+```
+
+### Topics
+
+```bash
 tgcli topics list --chat <id|@username> --limit 50 --json --timeout 30s
 tgcli topics search --chat <id|@username> --query "release" --limit 20 --json --timeout 30s
+```
 
+### Contacts
+
+```bash
 tgcli contacts search "alex" --limit 20 --json --timeout 30s
 tgcli contacts show --user <id> --json --timeout 30s
 tgcli contacts alias set --user <id> --alias "Alex"
+tgcli contacts alias rm --user <id>
 tgcli contacts tags add --user <id> --tag coworker --tag ai
+tgcli contacts tags rm --user <id> --tag ai
 tgcli contacts notes set --user <id> --notes "Met at meetup"
+```
 
+### Groups
+
+```bash
 tgcli groups list --query "dev" --limit 20 --json --timeout 30s
-tgcli groups info --chat <id> --json --timeout 30s
+tgcli groups info --chat <id|@username> --json --timeout 30s
+tgcli groups rename --chat <id|@username> --name "New Name" --json --timeout 30s
+tgcli groups members add --chat <id|@username> --user <userId> --json --timeout 30s
+tgcli groups members remove --chat <id|@username> --user <userId> --json --timeout 30s
+tgcli groups invite get --chat <id|@username> --json --timeout 30s
+tgcli groups invite revoke --chat <id|@username> --json --timeout 30s
+tgcli groups join --code <invite-code> --json --timeout 30s
+tgcli groups leave --chat <id|@username> --json --timeout 30s
+```
+
+### Tags (Channel Classification)
+
+```bash
+tgcli tags list --chat <id|@username> --json --timeout 30s
+tgcli tags set --chat <id|@username> --tag ai --tag dev --json --timeout 30s
+tgcli tags search --tag ai --limit 20 --json --timeout 30s
+tgcli tags auto --limit 50 --json --timeout 90s
+```
+
+### Metadata (Channel Cache)
+
+```bash
+tgcli metadata get --chat <id|@username> --json --timeout 30s
+tgcli metadata refresh --chat <id|@username> --force --json --timeout 30s
+tgcli metadata refresh --only-missing --limit 50 --json --timeout 90s
+```
+
+### Sync Jobs
+
+```bash
+tgcli sync status --json --timeout 30s
+tgcli sync jobs list --json --timeout 30s
+tgcli sync jobs list --status error --json --timeout 30s
+tgcli sync jobs add --chat <id|@username> --depth 500 --json --timeout 30s
+tgcli sync jobs add --chat <id|@username> --min-date 2025-01-01T00:00:00Z --json --timeout 30s
+tgcli sync jobs retry --all-errors --json --timeout 30s
+tgcli sync jobs retry --job-id <id> --json --timeout 30s
+tgcli sync jobs cancel --job-id <id> --json --timeout 30s
+```
+
+### Service (Background Sync Daemon)
+
+```bash
+tgcli service status --json --timeout 30s
+tgcli service install --json --timeout 30s
+tgcli service start --json --timeout 30s
+tgcli service stop --json --timeout 30s
+tgcli service logs --json --timeout 30s
+```
+
+### Config & Auth
+
+```bash
+tgcli auth status --json --timeout 30s
+tgcli auth logout --json --timeout 30s
+tgcli config list --json --timeout 30s
+tgcli config get <key> --json --timeout 30s
+tgcli config set <key> <value>
+tgcli doctor --json --timeout 30s
 ```
 
 ## Archive + Analysis Workflow
@@ -106,7 +198,9 @@ For tasks like "analyze chat history", "what happened this week", "digest/news":
 2. Ensure archive flow:
    - `tgcli channels sync --chat <id> --enable`
    - `tgcli sync jobs add --chat <id> --depth 500`
-   - `tgcli service start 2>&1 || { tgcli service install 2>&1 && tgcli service start 2>&1; }`
+   - `tgcli service status --json --timeout 30s` — check if running
+   - `tgcli service install --json --timeout 30s` — if not installed yet
+   - `tgcli service start --json --timeout 30s` — start daemon
 3. Read archive first:
    - `tgcli messages list --chat <id> --source archive --limit 500 --json --timeout 30s`
 4. If archive is still empty, fallback to live:
@@ -125,19 +219,24 @@ For tasks like "analyze chat history", "what happened this week", "digest/news":
 - "read messages in <channel>"
 - "search telegram for <query>"
 - "send this text/file to telegram"
+- "download file from telegram message"
 - "summarize what was discussed this week"
 - "what's new in <chat>?"
 - "show my mentions in <channel>"
+- "tag channels by topic"
+- "add user to telegram group"
+- "get invite link for group"
 - "прочитай сообщения в канале"
 - "найди в телеграме про релиз"
 - "отправь сообщение в канал"
 - "дай сводку по чату"
+- "скачай файл из сообщения"
 
 ### Should not trigger
 
 - "reply/edit/delete/forward telegram message"
 - "react with emoji to message"
 - "click inline button in bot"
-- "ban/kick/promote user in group"
+- "ban/kick/promote user with granular permissions"
 
 Use `telegram-mcp` for those operations.
