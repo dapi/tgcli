@@ -1220,7 +1220,8 @@ class TelegramClient {
   async getFolders() {
     await this.ensureLogin();
     const result = await this.client.getFolders();
-    return result.filters.map((f) => {
+    const filters = result?.filters ?? [];
+    return filters.map((f) => {
       if (f._ === 'dialogFilterDefault') return { id: 0, title: 'All Chats', type: 'default' };
       return {
         id: f.id,
@@ -1325,7 +1326,12 @@ class TelegramClient {
 
   async setFoldersOrder(ids) {
     await this.ensureLogin();
-    await this.client.setFoldersOrder(ids.map(Number));
+    const numericIds = ids.map((id) => {
+      const n = Number(id);
+      if (isNaN(n)) throw new Error(`Invalid folder ID: ${id}`);
+      return n;
+    });
+    await this.client.setFoldersOrder(numericIds);
     return { ok: true };
   }
 
@@ -1371,7 +1377,7 @@ class TelegramClient {
     const result = await this.client.joinChatlist(link);
     return {
       id: result.id,
-      title: typeof result.title === 'string' ? result.title : result.title.text,
+      title: typeof result.title === 'string' ? result.title : (result.title?.text ?? 'Unknown'),
       type: 'chatlist',
     };
   }

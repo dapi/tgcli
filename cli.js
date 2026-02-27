@@ -3707,6 +3707,8 @@ async function runFoldersReorder(globalFlags, options) {
         if (isNaN(n)) throw new Error(`Invalid folder ID: ${s.trim()}`);
         return n;
       });
+      const unique = new Set(ids);
+      if (unique.size !== ids.length) throw new Error('Duplicate folder IDs are not allowed');
       const result = await telegramClient.setFoldersOrder(ids);
       if (globalFlags.json) {
         writeJson(result);
