@@ -439,14 +439,14 @@ function buildProgram() {
     .argument('<folder>', 'Folder ID or title')
     .option('--title <name>', 'Folder name (max 12 chars)')
     .option('--emoji <emoji>', 'Emoji icon')
-    .option('--include-contacts', 'Include contacts')
-    .option('--include-non-contacts', 'Include non-contacts')
-    .option('--include-groups', 'Include groups')
-    .option('--include-channels', 'Include channels')
-    .option('--include-bots', 'Include bots')
-    .option('--exclude-muted', 'Exclude muted')
-    .option('--exclude-read', 'Exclude read')
-    .option('--exclude-archived', 'Exclude archived')
+    .option('--include-contacts / --no-include-contacts', 'Include contacts')
+    .option('--include-non-contacts / --no-include-non-contacts', 'Include non-contacts')
+    .option('--include-groups / --no-include-groups', 'Include groups')
+    .option('--include-channels / --no-include-channels', 'Include channels')
+    .option('--include-bots / --no-include-bots', 'Include bots')
+    .option('--exclude-muted / --no-exclude-muted', 'Exclude muted')
+    .option('--exclude-read / --no-exclude-read', 'Exclude read')
+    .option('--exclude-archived / --no-exclude-archived', 'Exclude archived')
     .option('--chat <id>', 'Chat to include (repeatable)', collectOption, [])
     .option('--exclude-chat <id>', 'Chat to exclude (repeatable)', collectOption, [])
     .option('--pin-chat <id>', 'Pin chat in folder (repeatable)', collectOption, [])
@@ -3643,14 +3643,14 @@ async function runFoldersEdit(globalFlags, folder, options) {
       const modification = {};
       if (options.title !== undefined) modification.title = options.title;
       if (options.emoji !== undefined) modification.emoji = options.emoji;
-      if (options.includeContacts) modification.contacts = true;
-      if (options.includeNonContacts) modification.nonContacts = true;
-      if (options.includeGroups) modification.groups = true;
-      if (options.includeChannels) modification.broadcasts = true;
-      if (options.includeBots) modification.bots = true;
-      if (options.excludeMuted) modification.excludeMuted = true;
-      if (options.excludeRead) modification.excludeRead = true;
-      if (options.excludeArchived) modification.excludeArchived = true;
+      if (options.includeContacts !== undefined) modification.contacts = options.includeContacts;
+      if (options.includeNonContacts !== undefined) modification.nonContacts = options.includeNonContacts;
+      if (options.includeGroups !== undefined) modification.groups = options.includeGroups;
+      if (options.includeChannels !== undefined) modification.broadcasts = options.includeChannels;
+      if (options.includeBots !== undefined) modification.bots = options.includeBots;
+      if (options.excludeMuted !== undefined) modification.excludeMuted = options.excludeMuted;
+      if (options.excludeRead !== undefined) modification.excludeRead = options.excludeRead;
+      if (options.excludeArchived !== undefined) modification.excludeArchived = options.excludeArchived;
       if (options.chat?.length) modification.includePeers = options.chat;
       if (options.excludeChat?.length) modification.excludePeers = options.excludeChat;
       if (options.pinChat?.length) modification.pinnedPeers = options.pinChat;

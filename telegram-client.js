@@ -1300,6 +1300,7 @@ class TelegramClient {
     await this.ensureLogin();
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    if (folder.id === 0 || folder._ === 'dialogFilterDefault') throw new Error('Cannot modify the default "All Chats" folder');
     const mod = {};
     if (modification.title !== undefined) mod.title = modification.title;
     if (modification.emoji !== undefined) mod.emoticon = modification.emoji;
@@ -1322,6 +1323,7 @@ class TelegramClient {
     await this.ensureLogin();
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    if (folder.id === 0 || folder._ === 'dialogFilterDefault') throw new Error('Cannot delete the default "All Chats" folder');
     await this.client.deleteFolder(folder.id);
     return { deleted: true, id: folder.id };
   }
@@ -1341,12 +1343,11 @@ class TelegramClient {
     await this.ensureLogin();
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    if (folder.id === 0 || folder._ === 'dialogFilterDefault') throw new Error('Cannot modify the default "All Chats" folder');
     const peers = folder.includePeers ? [...folder.includePeers] : [];
     const chatIdStr = String(chatId);
     const alreadyIncluded = peers.some((p) => {
-      const id = typeof p === 'object' && p !== null
-        ? String(p.userId ?? p.channelId ?? p.chatId ?? '')
-        : String(p);
+      const id = this._extractPeerId(p);
       return id === chatIdStr;
     });
     if (alreadyIncluded) throw new Error(`Chat ${chatId} already in folder ${folder.id}`);
@@ -1359,12 +1360,11 @@ class TelegramClient {
     await this.ensureLogin();
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+    if (folder.id === 0 || folder._ === 'dialogFilterDefault') throw new Error('Cannot modify the default "All Chats" folder');
     const chatIdStr = String(chatId);
     const originalPeers = folder.includePeers ?? [];
     const peers = originalPeers.filter((p) => {
-      const peerId = typeof p === 'object' && p !== null
-        ? String(p.userId ?? p.channelId ?? p.chatId ?? '')
-        : String(p);
+      const peerId = this._extractPeerId(p);
       return peerId !== chatIdStr;
     });
     if (peers.length === originalPeers.length) {
@@ -1374,8 +1374,18 @@ class TelegramClient {
     return { ok: true, folderId: folder.id };
   }
 
+  _extractPeerId(peer) {
+    if (typeof peer !== 'object' || peer === null) return String(peer);
+    const id = peer.userId ?? peer.channelId ?? peer.chatId;
+    if (id == null) throw new Error('Peer object has no recognizable ID field');
+    return String(id);
+  }
+
   async joinChatlist(link) {
     await this.ensureLogin();
+    if (!/^https?:\/\/t\.me\/addlist\/.+/.test(link)) {
+      throw new Error('Invalid chatlist link. Expected format: https://t.me/addlist/...');
+    }
     const result = await this.client.joinChatlist(link);
     return {
       id: result.id,
