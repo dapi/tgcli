@@ -2,33 +2,36 @@
 
 Telegram CLI with background sync and an optional MCP server for your personal account (MTProto, not bot API).
 
-## Installation
+## Quick Install (CLI + Skill)
+
+One command to install or update both the CLI and the AI agent skill:
 
 ```bash
-npm install -g @kfastov/tgcli
+curl -fsSL https://raw.githubusercontent.com/dapi/tgcli/main/install.sh | bash
 ```
+
+### Manual Installation
+
+Install CLI only:
 
 ```bash
-brew install kfastov/tap/tgcli
+npm install -g github:dapi/tgcli
 ```
 
-## Skill Installation (for AI agents)
-
-Install `tgcli` skill from this GitHub repository:
-
-```bash
-npx skills add dapi/tgcli --skill tgcli -y
-```
-
-Install for all supported agents (recommended):
+Install skill for AI agents:
 
 ```bash
 npx skills add dapi/tgcli --skill tgcli --agent '*' -y
 ```
 
-Notes:
-- `npx skills add dapi/tgcli` installs the skill from GitHub, not from npm.
-- Restart your agent session after installation so the new skill is picked up.
+Also available via brew and npm:
+
+```bash
+brew install kfastov/tap/tgcli
+npm install -g @kfastov/tgcli
+```
+
+Restart your agent session after skill installation so the new skill is picked up.
 
 ## Using the Skill
 
