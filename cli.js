@@ -3591,6 +3591,7 @@ async function runFoldersShow(globalFlags, folder) {
 }
 
 async function runFoldersCreate(globalFlags, options) {
+  if (options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -3600,7 +3601,6 @@ async function runFoldersCreate(globalFlags, options) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      if (options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
       const result = await telegramClient.createFolder({
         title: options.title,
         emoji: options.emoji,
@@ -3630,6 +3630,7 @@ async function runFoldersCreate(globalFlags, options) {
 }
 
 async function runFoldersEdit(globalFlags, folder, options) {
+  if (options.title !== undefined && options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -3639,7 +3640,6 @@ async function runFoldersEdit(globalFlags, folder, options) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      if (options.title !== undefined && options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
       const modification = {};
       if (options.title !== undefined) modification.title = options.title;
       if (options.emoji !== undefined) modification.emoji = options.emoji;
