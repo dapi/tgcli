@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="github:dapi/tgcli"
+REPO_URL="https://github.com/dapi/tgcli.git"
+INSTALL_DIR="${HOME}/.tgcli"
 SKILL_REPO="dapi/tgcli"
 SKILL_NAME="tgcli"
 
@@ -36,13 +37,19 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-# Install or update CLI
-if command -v tgcli >/dev/null 2>&1; then
+# Install or update CLI via git clone + npm link
+# (npm install -g github:... has a known tar bug with @mtcute/core)
+if [ -d "$INSTALL_DIR/.git" ]; then
   info "Updating tgcli..."
+  git -C "$INSTALL_DIR" pull --ff-only 2>/dev/null || git -C "$INSTALL_DIR" fetch origin main && git -C "$INSTALL_DIR" reset --hard origin/main
+  (cd "$INSTALL_DIR" && npm install --ignore-scripts && npm rebuild)
 else
   info "Installing tgcli..."
+  git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  (cd "$INSTALL_DIR" && npm install)
 fi
-npm install -g "$REPO"
+mise trust "$INSTALL_DIR/.mise.toml" 2>/dev/null || true
+(cd "$INSTALL_DIR" && npm link)
 ok "tgcli $(tgcli --version 2>/dev/null || echo 'installed')"
 
 # Install or update skill
