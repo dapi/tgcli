@@ -15,7 +15,7 @@ import { resolveStoreDir } from './core/store.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
-const LAUNCHD_LABEL = 'com.kfastov.tgcli';
+const LAUNCHD_LABEL = 'com.dapi.tgcli';
 const SYSTEMD_SERVICE_NAME = 'tgcli';
 const CONFIG_SPECS = [
   { key: 'apiId', path: ['apiId'], type: 'number' },

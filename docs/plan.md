@@ -40,7 +40,7 @@
    - Publish scoped npm package.
 
 7) Homebrew tap
-   - Create kfastov/homebrew-tap.
+   - Create dapi/homebrew-tap.
    - Add tgcli.rb formula (depends_on "node") that installs npm package.
 
 ## Notes

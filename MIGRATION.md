@@ -5,7 +5,7 @@ This guide covers the breaking changes when moving from the legacy frogiverse bu
 ## CLI rename
 - Old command: `frogiverse`
 - New command: `tgcli`
-- npm package: `@kfastov/tgcli`
+- npm package: `@dapi/tgcli`
 
 ## Store location
 - Default store moved from `./data` to the OS app-data directory:

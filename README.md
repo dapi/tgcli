@@ -27,8 +27,8 @@ npx skills add dapi/tgcli --skill tgcli --agent '*' -g -y
 Also available via brew and npm:
 
 ```bash
-brew install kfastov/tap/tgcli
-npm install -g @kfastov/tgcli
+brew install dapi/tap/tgcli
+npm install -g @dapi/tgcli
 ```
 
 Restart your agent session after skill installation so the new skill is picked up.
