@@ -10,6 +10,22 @@ ok()    { printf '\033[1;32m%s\033[0m\n' "$*"; }
 warn()  { printf '\033[1;33m%s\033[0m\n' "$*"; }
 error() { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
 
+# Activate node version managers if npm is not already in PATH
+if ! command -v npm >/dev/null 2>&1; then
+  set +u  # version managers use unset variables
+  if command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate bash 2>/dev/null)" || true
+    eval "$(mise env 2>/dev/null)" || true
+  fi
+  if [ -s "${HOME:-}/.nvm/nvm.sh" ]; then
+    . "$HOME/.nvm/nvm.sh"
+  fi
+  if command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env 2>/dev/null)" || true
+  fi
+  set -u
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   error "Node.js is required but not found. Install it first: https://nodejs.org"
   exit 1
