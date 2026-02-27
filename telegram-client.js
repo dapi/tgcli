@@ -1246,7 +1246,9 @@ class TelegramClient {
 
   async findFolder(idOrName) {
     await this.ensureLogin();
-    const id = Number(idOrName);
+    const trimmed = String(idOrName).trim();
+    if (trimmed === '') throw new Error('Folder identifier cannot be empty');
+    const id = Number(trimmed);
     if (!isNaN(id)) return this.client.findFolder({ id });
     return this.client.findFolder({ title: String(idOrName) });
   }
