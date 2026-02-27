@@ -55,7 +55,7 @@ ok "tgcli $(tgcli --version 2>/dev/null || echo 'installed')"
 # Install or update skill
 if command -v npx >/dev/null 2>&1; then
   info "Installing tgcli skill for AI agents..."
-  npx skills add "$SKILL_REPO" --skill "$SKILL_NAME" --agent '*' -y
+  npx skills add "$SKILL_REPO" --skill "$SKILL_NAME" --agent '*' -g -y
   ok "Skill '$SKILL_NAME' installed"
 else
   warn "npx not found — skipping skill installation"

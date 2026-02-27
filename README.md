@@ -21,7 +21,7 @@ npm install -g github:dapi/tgcli
 Install skill for AI agents:
 
 ```bash
-npx skills add dapi/tgcli --skill tgcli --agent '*' -y
+npx skills add dapi/tgcli --skill tgcli --agent '*' -g -y
 ```
 
 Also available via brew and npm:

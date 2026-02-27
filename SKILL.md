@@ -17,7 +17,7 @@ Telegram CLI skill for AI agents.
 Install this skill from GitHub:
 
 ```bash
-npx skills add dapi/tgcli --skill tgcli --agent '*' -y
+npx skills add dapi/tgcli --skill tgcli --agent '*' -g -y
 ```
 
 Install CLI (dapi fork):
