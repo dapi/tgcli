@@ -61,6 +61,7 @@ tgcli auth
 
 ```bash
 tgcli messages list --chat <id|@username> --limit 50 --source archive --json --timeout 30s
+tgcli messages list --chat <id|@username> --chat <id2> --limit 50 --source archive --json --timeout 30s
 tgcli messages list --chat <id|@username> --topic <topicId> --after 2025-01-01T00:00:00Z --limit 100 --source archive --json --timeout 30s
 tgcli messages show --chat <id|@username> --id <msgId> --source archive --json --timeout 30s
 tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 --source archive --json --timeout 30s
@@ -73,9 +74,10 @@ tgcli messages search "Claude Code" --chat <id|@username> --source archive --jso
 tgcli messages search --query "Claude Code" --chat <id|@username> --source archive --json --timeout 30s
 tgcli messages search --regex "claude\\s+(code|agent)" --chat <id|@username> --source archive --json --timeout 30s
 tgcli messages search --tag ai --chat <id|@username> --source archive --json --timeout 30s
+tgcli messages search "release" --chat <id|@username> --after 2025-06-01T00:00:00Z --before 2025-06-30T00:00:00Z --source archive --json --timeout 30s
 ```
 
-Both positional query and `--query` flag work. Use `--regex` for pattern matching, `--tag` to filter by channel tags.
+Both positional query and `--query` flag work. `--chat` accepts multiple values. Use `--regex` for pattern matching, `--tag` to filter by channel tags, `--after`/`--before` for date range.
 
 ### Send Text/File
 
@@ -100,8 +102,8 @@ tgcli media download --chat <id|@username> --id <msgId> --output /path/to/save -
 ```bash
 tgcli channels list --query "ai" --limit 20 --json --timeout 30s
 tgcli channels show --chat <id|@username> --json --timeout 30s
-tgcli channels sync --chat <id|@username> --enable
-tgcli channels sync --chat <id|@username> --disable
+tgcli channels sync --chat <id|@username> --enable --json --timeout 30s
+tgcli channels sync --chat <id|@username> --disable --json --timeout 30s
 ```
 
 ### Topics
@@ -116,11 +118,11 @@ tgcli topics search --chat <id|@username> --query "release" --limit 20 --json --
 ```bash
 tgcli contacts search "alex" --limit 20 --json --timeout 30s
 tgcli contacts show --user <id> --json --timeout 30s
-tgcli contacts alias set --user <id> --alias "Alex"
-tgcli contacts alias rm --user <id>
-tgcli contacts tags add --user <id> --tag coworker --tag ai
-tgcli contacts tags rm --user <id> --tag ai
-tgcli contacts notes set --user <id> --notes "Met at meetup"
+tgcli contacts alias set --user <id> --alias "Alex" --json --timeout 30s
+tgcli contacts alias rm --user <id> --json --timeout 30s
+tgcli contacts tags add --user <id> --tag coworker --tag ai --json --timeout 30s
+tgcli contacts tags rm --user <id> --tag ai --json --timeout 30s
+tgcli contacts notes set --user <id> --notes "Met at meetup" --json --timeout 30s
 ```
 
 ### Groups
@@ -129,7 +131,7 @@ tgcli contacts notes set --user <id> --notes "Met at meetup"
 tgcli groups list --query "dev" --limit 20 --json --timeout 30s
 tgcli groups info --chat <id|@username> --json --timeout 30s
 tgcli groups rename --chat <id|@username> --name "New Name" --json --timeout 30s
-tgcli groups members add --chat <id|@username> --user <userId> --json --timeout 30s
+tgcli groups members add --chat <id|@username> --user <userId> --user <userId2> --json --timeout 30s
 tgcli groups members remove --chat <id|@username> --user <userId> --json --timeout 30s
 tgcli groups invite get --chat <id|@username> --json --timeout 30s
 tgcli groups invite revoke --chat <id|@username> --json --timeout 30s
@@ -143,7 +145,7 @@ tgcli groups leave --chat <id|@username> --json --timeout 30s
 tgcli tags list --chat <id|@username> --json --timeout 30s
 tgcli tags set --chat <id|@username> --tag ai --tag dev --json --timeout 30s
 tgcli tags search --tag ai --limit 20 --json --timeout 30s
-tgcli tags auto --limit 50 --json --timeout 90s
+tgcli tags auto --limit 50 --json --timeout 90s            # AI-powered: generates tags from channel metadata/content
 ```
 
 ### Metadata (Channel Cache)
@@ -184,7 +186,7 @@ tgcli auth status --json --timeout 30s
 tgcli auth logout --json --timeout 30s
 tgcli config list --json --timeout 30s
 tgcli config get <key> --json --timeout 30s
-tgcli config set <key> <value>
+tgcli config set <key> <value> --json --timeout 30s
 tgcli doctor --json --timeout 30s
 ```
 
