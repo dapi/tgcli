@@ -258,6 +258,76 @@ const topicsSearchSchema = {
   limit: z.number().int().positive().optional().describe("Maximum number of topics to return (default: 100)"),
 };
 
+const folderIdOrNameSchema = {
+  folder: z
+    .union([
+      z.number({ invalid_type_error: "folder must be a number" }),
+      z.string({ invalid_type_error: "folder must be a string" }).min(1),
+    ])
+    .describe("Folder ID (numeric) or title (string)"),
+};
+
+const createFolderSchema = {
+  title: z.string().min(1).max(12).describe("Folder name (max 12 chars)"),
+  emoji: z.string().optional().describe("Emoji icon"),
+  contacts: z.boolean().optional().describe("Include contacts"),
+  nonContacts: z.boolean().optional().describe("Include non-contacts"),
+  groups: z.boolean().optional().describe("Include groups"),
+  broadcasts: z.boolean().optional().describe("Include channels/broadcasts"),
+  bots: z.boolean().optional().describe("Include bots"),
+  excludeMuted: z.boolean().optional().describe("Exclude muted chats"),
+  excludeRead: z.boolean().optional().describe("Exclude read chats"),
+  excludeArchived: z.boolean().optional().describe("Exclude archived chats"),
+  includePeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to include"),
+  excludePeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to exclude"),
+  pinnedPeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to pin"),
+};
+
+const editFolderSchema = {
+  folder: z
+    .union([
+      z.number({ invalid_type_error: "folder must be a number" }),
+      z.string({ invalid_type_error: "folder must be a string" }).min(1),
+    ])
+    .describe("Folder ID (numeric) or title (string)"),
+  title: z.string().min(1).max(12).optional().describe("New folder name"),
+  emoji: z.string().optional().describe("Emoji icon"),
+  contacts: z.boolean().optional().describe("Include contacts"),
+  nonContacts: z.boolean().optional().describe("Include non-contacts"),
+  groups: z.boolean().optional().describe("Include groups"),
+  broadcasts: z.boolean().optional().describe("Include channels/broadcasts"),
+  bots: z.boolean().optional().describe("Include bots"),
+  excludeMuted: z.boolean().optional().describe("Exclude muted chats"),
+  excludeRead: z.boolean().optional().describe("Exclude read chats"),
+  excludeArchived: z.boolean().optional().describe("Exclude archived chats"),
+  includePeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to include"),
+  excludePeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to exclude"),
+  pinnedPeers: z.array(z.union([z.number(), z.string()])).optional().describe("Chat IDs to pin"),
+};
+
+const reorderFoldersSchema = {
+  ids: z.array(z.number().int()).min(1).describe("Folder IDs in desired order"),
+};
+
+const folderChatSchema = {
+  folder: z
+    .union([
+      z.number({ invalid_type_error: "folder must be a number" }),
+      z.string({ invalid_type_error: "folder must be a string" }).min(1),
+    ])
+    .describe("Folder ID (numeric) or title (string)"),
+  chatId: z
+    .union([
+      z.number({ invalid_type_error: "chatId must be a number" }),
+      z.string({ invalid_type_error: "chatId must be a string" }).min(1),
+    ])
+    .describe("Chat ID to add/remove"),
+};
+
+const joinChatlistSchema = {
+  link: z.string().min(1).describe("Shared folder invite link"),
+};
+
 const messageSourceSchema = z
   .enum(["archive", "live", "both"])
   .optional()
@@ -1690,6 +1760,125 @@ function createServerInstance() {
             text: JSON.stringify(jobs, null, 2),
           },
         ],
+      };
+    },
+  );
+
+  // --- Folder tools ---
+
+  server.tool(
+    "listFolders",
+    "Lists all Telegram chat folders for the authenticated account.",
+    {},
+    async () => {
+      await telegramClient.ensureLogin();
+      const folders = await telegramClient.getFolders();
+      return {
+        content: [{ type: "text", text: JSON.stringify(folders, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "showFolder",
+    "Shows detailed information about a specific chat folder.",
+    folderIdOrNameSchema,
+    async ({ folder }) => {
+      await telegramClient.ensureLogin();
+      const info = await telegramClient.showFolder(folder);
+      return {
+        content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "createFolder",
+    "Creates a new Telegram chat folder with specified filters and peers.",
+    createFolderSchema,
+    async (params) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.createFolder(params);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "editFolder",
+    "Edits an existing Telegram chat folder.",
+    editFolderSchema,
+    async ({ folder, ...modification }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.editFolder(folder, modification);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "deleteFolder",
+    "Deletes a Telegram chat folder.",
+    folderIdOrNameSchema,
+    async ({ folder }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.deleteFolder(folder);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "reorderFolders",
+    "Reorders Telegram chat folders.",
+    reorderFoldersSchema,
+    async ({ ids }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.setFoldersOrder(ids);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "addChatToFolder",
+    "Adds a chat to a Telegram chat folder.",
+    folderChatSchema,
+    async ({ folder, chatId }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.addChatToFolder(folder, chatId);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "removeChatFromFolder",
+    "Removes a chat from a Telegram chat folder.",
+    folderChatSchema,
+    async ({ folder, chatId }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.removeChatFromFolder(folder, chatId);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
+  server.tool(
+    "joinChatlist",
+    "Joins a shared Telegram chat folder via invite link.",
+    joinChatlistSchema,
+    async ({ link }) => {
+      await telegramClient.ensureLogin();
+      const result = await telegramClient.joinChatlist(link);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     },
   );
