@@ -1224,7 +1224,7 @@ class TelegramClient {
       if (f._ === 'dialogFilterDefault') return { id: 0, title: 'All Chats', type: 'default' };
       return {
         id: f.id,
-        title: typeof f.title === 'string' ? f.title : f.title.text,
+        title: typeof f.title === 'string' ? f.title : (f.title?.text ?? 'Unknown'),
         emoji: f.emoticon ?? null,
         color: f.color ?? null,
         type: f._ === 'dialogFilterChatlist' ? 'chatlist' : 'filter',
@@ -1256,7 +1256,7 @@ class TelegramClient {
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
     return {
       id: folder.id,
-      title: typeof folder.title === 'string' ? folder.title : folder.title.text,
+      title: typeof folder.title === 'string' ? folder.title : (folder.title?.text ?? 'Unknown'),
       emoji: folder.emoticon ?? null,
       color: folder.color ?? null,
       type: folder._ === 'dialogFilterChatlist' ? 'chatlist' : 'filter',
@@ -1290,7 +1290,7 @@ class TelegramClient {
     if (options.excludePeers?.length) params.excludePeers = options.excludePeers;
     if (options.pinnedPeers?.length) params.pinnedPeers = options.pinnedPeers;
     const result = await this.client.createFolder(params);
-    return { id: result.id, title: typeof result.title === 'string' ? result.title : result.title.text };
+    return { id: result.id, title: typeof result.title === 'string' ? result.title : (result.title?.text ?? 'Unknown') };
   }
 
   async editFolder(idOrName, modification) {
@@ -1312,7 +1312,7 @@ class TelegramClient {
     if (modification.excludePeers !== undefined) mod.excludePeers = modification.excludePeers;
     if (modification.pinnedPeers !== undefined) mod.pinnedPeers = modification.pinnedPeers;
     const result = await this.client.editFolder({ folder, modification: mod });
-    return { id: result.id, title: typeof result.title === 'string' ? result.title : result.title.text };
+    return { id: result.id, title: typeof result.title === 'string' ? result.title : (result.title?.text ?? 'Unknown') };
   }
 
   async deleteFolder(idOrName) {
@@ -1334,6 +1334,14 @@ class TelegramClient {
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
     const peers = folder.includePeers ? [...folder.includePeers] : [];
+    const chatIdStr = String(chatId);
+    const alreadyIncluded = peers.some((p) => {
+      const id = typeof p === 'object' && p !== null
+        ? String(p.userId ?? p.channelId ?? p.chatId ?? '')
+        : String(p);
+      return id === chatIdStr;
+    });
+    if (alreadyIncluded) throw new Error(`Chat ${chatId} already in folder ${folder.id}`);
     peers.push(chatId);
     await this.client.editFolder({ folder, modification: { includePeers: peers } });
     return { ok: true, folderId: folder.id };
@@ -1344,12 +1352,16 @@ class TelegramClient {
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
     const chatIdStr = String(chatId);
-    const peers = (folder.includePeers ?? []).filter((p) => {
+    const originalPeers = folder.includePeers ?? [];
+    const peers = originalPeers.filter((p) => {
       const peerId = typeof p === 'object' && p !== null
         ? String(p.userId ?? p.channelId ?? p.chatId ?? '')
         : String(p);
       return peerId !== chatIdStr;
     });
+    if (peers.length === originalPeers.length) {
+      throw new Error(`Chat ${chatId} not found in folder ${folder.id}`);
+    }
     await this.client.editFolder({ folder, modification: { includePeers: peers } });
     return { ok: true, folderId: folder.id };
   }
