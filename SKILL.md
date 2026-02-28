@@ -38,6 +38,7 @@ tgcli auth
 |-|-|
 | Read/search/archive messages | reply/edit/delete/forward |
 | Send text/files and topic posts | reactions |
+| | Send photo with preview (image as cover) via `send_file` |
 | Forum topics listing/search | inline bot buttons |
 | Download media from messages | advanced interactive actions |
 | Group admin (rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
@@ -92,6 +93,23 @@ tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --js
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --filename custom-name.pdf --json --timeout 30s
 ```
+
+### Post with Cover Image (Photo + Caption)
+
+tgcli `send file` sends images as **documents** (no preview). To post an image as a photo with caption (cover-style), use **telegram-mcp** `send_file`:
+
+Workflow:
+1. Download or prepare image locally
+2. Send via telegram-mcp:
+   - `mcp__telegram-mcp__send_file(chat_id=<id>, file_path="/tmp/image.jpg", caption="Post text")`
+3. Caption limit: 1024 characters. For longer posts — send photo first, then follow up with `send text`.
+
+For draft/approval flow:
+1. Send to Saved Messages first (use own user ID, not `me`)
+2. Review in Telegram
+3. If approved — resend to target channel
+
+Note: telegram-mcp `send_file` auto-detects .jpg/.png as photos with preview. tgcli `send file` always sends as document attachment.
 
 ### Media Download
 
@@ -273,6 +291,9 @@ Alternative without systemd service (one-shot or foreground):
 - "отправь сообщение в канал"
 - "дай сводку по чату"
 - "скачай файл из сообщения"
+- "опубликуй пост с картинкой"
+- "отправь фото с подписью в канал"
+- "post with cover image"
 
 ### Should not trigger
 
