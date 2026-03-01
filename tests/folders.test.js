@@ -202,6 +202,17 @@ describe('editFolder', () => {
     await expect(tc.editFolder('99', { title: 'X' })).rejects.toThrow('Folder not found: 99');
   });
 
+  it('passes empty modification object', async () => {
+    tc.client.findFolder.mockResolvedValue({ id: 1, _: 'dialogFilter' });
+    tc.client.editFolder.mockResolvedValue({ id: 1, title: 'Same' });
+    const result = await tc.editFolder('1', {});
+    expect(tc.client.editFolder).toHaveBeenCalledWith({
+      folder: { id: 1, _: 'dialogFilter' },
+      modification: {},
+    });
+    expect(result.title).toBe('Same');
+  });
+
   it('passes boolean false correctly', async () => {
     tc.client.findFolder.mockResolvedValue({ id: 1, _: 'dialogFilter' });
     tc.client.editFolder.mockResolvedValue({ id: 1, title: 'T' });
@@ -310,6 +321,22 @@ describe('addChatToFolder', () => {
     await expect(tc.addChatToFolder('1', 123)).rejects.toThrow('Chat 123 already in folder 1');
   });
 
+  it('detects duplicate by channelId', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+      includePeers: [{ channelId: 456 }],
+    });
+    await expect(tc.addChatToFolder('1', 456)).rejects.toThrow('Chat 456 already in folder 1');
+  });
+
+  it('detects duplicate by chatId', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+      includePeers: [{ chatId: 789 }],
+    });
+    await expect(tc.addChatToFolder('1', 789)).rejects.toThrow('Chat 789 already in folder 1');
+  });
+
   it('throws on default folder', async () => {
     tc.client.findFolder.mockResolvedValue({ id: 0, _: 'dialogFilterDefault' });
     await expect(tc.addChatToFolder('0', 123)).rejects.toThrow('Cannot modify the default');
@@ -339,6 +366,20 @@ describe('removeChatFromFolder', () => {
       id: 1, _: 'dialogFilter', includePeers: [{ userId: 456 }],
     });
     await expect(tc.removeChatFromFolder('1', 123)).rejects.toThrow('Chat 123 not found in folder 1');
+  });
+
+  it('removes chat by channelId', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+      includePeers: [{ channelId: 456 }, { userId: 789 }],
+    });
+    tc.client.editFolder.mockResolvedValue({ id: 1 });
+    const result = await tc.removeChatFromFolder('1', 456);
+    expect(tc.client.editFolder).toHaveBeenCalledWith({
+      folder: expect.objectContaining({ id: 1 }),
+      modification: { includePeers: [{ userId: 789 }] },
+    });
+    expect(result).toEqual({ ok: true, folderId: 1 });
   });
 
   it('throws on empty includePeers', async () => {
@@ -433,5 +474,9 @@ describe('joinChatlist', () => {
   it('throws when API returns null', async () => {
     tc.client.joinChatlist.mockResolvedValue(null);
     await expect(tc.joinChatlist('https://t.me/addlist/abc123')).rejects.toThrow('Failed to join chatlist');
+  });
+
+  it('rejects path traversal in slug', async () => {
+    await expect(tc.joinChatlist('https://t.me/addlist/abc/../../evil')).rejects.toThrow('Invalid chatlist link');
   });
 });
