@@ -141,3 +141,6 @@ backlog.md
 .agents/
 skills/
 skills-lock.json
+
+# pr-review-fix-loop local artifacts
+.claude/*.local.md

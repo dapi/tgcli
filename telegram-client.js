@@ -1392,6 +1392,7 @@ class TelegramClient {
       throw new Error(`Invalid chatlist link: ${link}. Expected format: https://t.me/addlist/<slug>`);
     }
     const result = await this.client.joinChatlist(link);
+    if (!result) throw new Error(`Failed to join chatlist: no result returned for ${link}`);
     return {
       id: result.id,
       title: typeof result.title === 'string' ? result.title : (result.title?.text ?? 'Unknown'),
