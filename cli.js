@@ -3588,7 +3588,15 @@ async function runFoldersShow(globalFlags, folder) {
       if (globalFlags.json) {
         writeJson(info);
       } else {
-        console.log(JSON.stringify(info, null, 2));
+        console.log(`${info.title} (id=${info.id}, type=${info.type})`);
+        if (info.emoji) console.log(`  emoji: ${info.emoji}`);
+        const flags = ['contacts', 'nonContacts', 'groups', 'broadcasts', 'bots'].filter((f) => info[f]);
+        if (flags.length) console.log(`  includes: ${flags.join(', ')}`);
+        const excludes = ['excludeMuted', 'excludeRead', 'excludeArchived'].filter((f) => info[f]);
+        if (excludes.length) console.log(`  excludes: ${excludes.join(', ')}`);
+        if (info.includePeers?.length) console.log(`  peers: ${info.includePeers.length} included`);
+        if (info.excludePeers?.length) console.log(`  excluded peers: ${info.excludePeers.length}`);
+        if (info.pinnedPeers?.length) console.log(`  pinned peers: ${info.pinnedPeers.length}`);
       }
     } finally {
       await messageSyncService.shutdown();
@@ -3638,7 +3646,7 @@ async function runFoldersCreate(globalFlags, options) {
 }
 
 async function runFoldersEdit(globalFlags, folder, options) {
-  if (options.title !== undefined && options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
+  if (options.title !== undefined && (options.title.length === 0 || options.title.length > 12)) throw new Error('Folder title must be 1-12 characters');
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
