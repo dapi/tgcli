@@ -137,10 +137,10 @@ backlog.md
 # Claude Code ctags index
 .claude/tags
 
+# pr-review-fix-loop local artifacts
+.claude/*.local.md
+
 # Skills installer artifacts (npx skills add)
 .agents/
 skills/
 skills-lock.json
-
-# pr-review-fix-loop local artifacts
-.claude/*.local.md
