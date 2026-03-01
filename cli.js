@@ -3718,7 +3718,7 @@ async function runFoldersReorder(globalFlags, options) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      const ids = options.ids.split(',').map((s) => s.trim()).filter((s) => s !== '');
+      const ids = options.ids.split(',').map((s) => s.trim()).filter((s) => s !== '').map(Number);
       const result = await telegramClient.setFoldersOrder(ids);
       if (globalFlags.json) {
         writeJson(result);

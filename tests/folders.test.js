@@ -233,6 +233,14 @@ describe('createFolder', () => {
     await tc.createFolder({ title: 'Min' });
     expect(tc.client.createFolder).toHaveBeenCalledWith({ title: 'Min' });
   });
+
+  it('passes boolean false values correctly', async () => {
+    tc.client.createFolder.mockResolvedValue({ id: 8, title: 'Test' });
+    await tc.createFolder({ title: 'Test', contacts: false, groups: false });
+    expect(tc.client.createFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Test', contacts: false, groups: false }),
+    );
+  });
 });
 
 describe('editFolder', () => {
@@ -427,6 +435,11 @@ describe('addChatToFolder', () => {
     expect(originalPeers[0]).toEqual({ userId: 456 });
   });
 
+  it('throws when folder not found', async () => {
+    tc.client.findFolder.mockResolvedValue(null);
+    await expect(tc.addChatToFolder('999', 123)).rejects.toThrow('Folder not found: 999');
+  });
+
   it('throws on default folder', async () => {
     tc.client.findFolder.mockResolvedValue({ id: 0, _: 'dialogFilterDefault' });
     await expect(tc.addChatToFolder('0', 123)).rejects.toThrow('Cannot modify the default');
@@ -468,6 +481,20 @@ describe('removeChatFromFolder', () => {
     expect(tc.client.editFolder).toHaveBeenCalledWith({
       folder: expect.objectContaining({ id: 1 }),
       modification: { includePeers: [{ userId: 789 }] },
+    });
+    expect(result).toEqual({ ok: true, folderId: 1 });
+  });
+
+  it('removes chat by chatId', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+      includePeers: [{ chatId: 111 }, { userId: 222 }],
+    });
+    tc.client.editFolder.mockResolvedValue({ id: 1 });
+    const result = await tc.removeChatFromFolder('1', 111);
+    expect(tc.client.editFolder).toHaveBeenCalledWith({
+      folder: expect.objectContaining({ id: 1 }),
+      modification: { includePeers: [{ userId: 222 }] },
     });
     expect(result).toEqual({ ok: true, folderId: 1 });
   });
