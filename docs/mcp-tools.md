@@ -204,3 +204,40 @@ This document defines the consolidated MCP tool surface. The goal is fewer tools
 ### groupsLeave
 - Params: channelId (required)
 - Output: { channelId, left: true }.
+
+## Folders
+### listFolders
+- Params: none.
+- Output: list of folders with id, title, type, emoji, filter flags, peer counts.
+
+### showFolder
+- Params: folder (number|string, required) — folder ID or title.
+- Output: detailed folder info with filter flags and peer lists (includePeers, excludePeers, pinnedPeers).
+
+### createFolder
+- Params: title (required, max 12 chars), emoji?, contacts?, nonContacts?, groups?, broadcasts?, bots?, excludeMuted?, excludeRead?, excludeArchived?, includePeers?, excludePeers?, pinnedPeers?
+- Output: { id, title }.
+
+### editFolder
+- Params: folder (required), title?, emoji?, contacts?, nonContacts?, groups?, broadcasts?, bots?, excludeMuted?, excludeRead?, excludeArchived?, includePeers?, excludePeers?, pinnedPeers?
+- Output: { id, title }.
+
+### deleteFolder
+- Params: folder (required).
+- Output: { deleted: true, id }.
+
+### reorderFolders
+- Params: ids (array of numbers, required).
+- Output: { ok: true }.
+
+### addChatToFolder
+- Params: folder (required), chatId (required).
+- Output: { ok: true, folderId }.
+
+### removeChatFromFolder
+- Params: folder (required), chatId (required).
+- Output: { ok: true, folderId }.
+
+### joinChatlist
+- Params: link (required) — shared folder invite link.
+- Output: { id, title, type: "chatlist" }.
