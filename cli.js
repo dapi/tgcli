@@ -439,14 +439,22 @@ function buildProgram() {
     .argument('<folder>', 'Folder ID or title')
     .option('--title <name>', 'Folder name (max 12 chars)')
     .option('--emoji <emoji>', 'Emoji icon')
-    .option('--include-contacts / --no-include-contacts', 'Include contacts')
-    .option('--include-non-contacts / --no-include-non-contacts', 'Include non-contacts')
-    .option('--include-groups / --no-include-groups', 'Include groups')
-    .option('--include-channels / --no-include-channels', 'Include channels')
-    .option('--include-bots / --no-include-bots', 'Include bots')
-    .option('--exclude-muted / --no-exclude-muted', 'Exclude muted')
-    .option('--exclude-read / --no-exclude-read', 'Exclude read')
-    .option('--exclude-archived / --no-exclude-archived', 'Exclude archived')
+    .option('--include-contacts', 'Include contacts')
+    .option('--no-include-contacts', 'Do not include contacts')
+    .option('--include-non-contacts', 'Include non-contacts')
+    .option('--no-include-non-contacts', 'Do not include non-contacts')
+    .option('--include-groups', 'Include groups')
+    .option('--no-include-groups', 'Do not include groups')
+    .option('--include-channels', 'Include channels')
+    .option('--no-include-channels', 'Do not include channels')
+    .option('--include-bots', 'Include bots')
+    .option('--no-include-bots', 'Do not include bots')
+    .option('--exclude-muted', 'Exclude muted')
+    .option('--no-exclude-muted', 'Do not exclude muted')
+    .option('--exclude-read', 'Exclude read')
+    .option('--no-exclude-read', 'Do not exclude read')
+    .option('--exclude-archived', 'Exclude archived')
+    .option('--no-exclude-archived', 'Do not exclude archived')
     .option('--chat <id>', 'Chat to include (repeatable)', collectOption, [])
     .option('--exclude-chat <id>', 'Chat to exclude (repeatable)', collectOption, [])
     .option('--pin-chat <id>', 'Pin chat in folder (repeatable)', collectOption, [])
@@ -3704,7 +3712,7 @@ async function runFoldersReorder(globalFlags, options) {
       }
       const ids = options.ids.split(',').map((s) => {
         const n = Number(s.trim());
-        if (isNaN(n)) throw new Error(`Invalid folder ID: ${s.trim()}`);
+        if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid folder ID: ${s.trim()}`);
         return n;
       });
       const unique = new Set(ids);
