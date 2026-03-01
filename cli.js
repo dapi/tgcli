@@ -3599,7 +3599,7 @@ async function runFoldersShow(globalFlags, folder) {
 }
 
 async function runFoldersCreate(globalFlags, options) {
-  if (options.title.length > 12) throw new Error('Folder title must be 12 characters or less');
+  if (!options.title || options.title.length > 12) throw new Error('Folder title must be 1-12 characters');
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -3710,7 +3710,7 @@ async function runFoldersReorder(globalFlags, options) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      const ids = options.ids.split(',').filter((s) => s.trim() !== '').map((s) => Number(s.trim()));
+      const ids = options.ids.split(',').map((s) => s.trim()).filter((s) => s !== '');
       const result = await telegramClient.setFoldersOrder(ids);
       if (globalFlags.json) {
         writeJson(result);
