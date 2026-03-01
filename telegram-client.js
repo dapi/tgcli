@@ -1261,7 +1261,7 @@ class TelegramClient {
       title: typeof folder.title === 'string' ? folder.title : (folder.title?.text ?? 'Unknown'),
       emoji: folder.emoticon ?? null,
       color: folder.color ?? null,
-      type: folder._ === 'dialogFilterChatlist' ? 'chatlist' : 'filter',
+      type: folder._ === 'dialogFilterChatlist' ? 'chatlist' : folder._ === 'dialogFilterDefault' ? 'default' : 'filter',
       contacts: folder.contacts ?? false,
       nonContacts: folder.nonContacts ?? false,
       groups: folder.groups ?? false,
@@ -1278,6 +1278,7 @@ class TelegramClient {
 
   async createFolder(options) {
     await this.ensureLogin();
+    if (!options.title) throw new Error('Folder title is required');
     const params = { title: options.title };
     if (options.emoji) params.emoticon = options.emoji;
     if (options.contacts !== undefined) params.contacts = options.contacts;
@@ -1329,6 +1330,7 @@ class TelegramClient {
 
   async setFoldersOrder(ids) {
     await this.ensureLogin();
+    if (!ids.length) throw new Error('At least one folder ID is required');
     const numericIds = ids.map((id) => {
       const n = Number(id);
       if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid folder ID: ${id}`);
@@ -1380,7 +1382,8 @@ class TelegramClient {
   }
 
   _extractPeerId(peer) {
-    if (typeof peer !== 'object' || peer === null) return String(peer);
+    if (peer == null) throw new Error(`Peer is ${peer}, cannot extract ID`);
+    if (typeof peer !== 'object') return String(peer);
     const id = peer.userId ?? peer.channelId ?? peer.chatId;
     if (id == null) throw new Error(`Peer object has no recognizable ID field: ${JSON.stringify(peer)}`);
     return String(id);

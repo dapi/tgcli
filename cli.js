@@ -3603,7 +3603,7 @@ async function runFoldersCreate(globalFlags, options) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3642,7 +3642,7 @@ async function runFoldersEdit(globalFlags, folder, options) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3680,7 +3680,7 @@ async function runFoldersDelete(globalFlags, folder) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3704,7 +3704,7 @@ async function runFoldersReorder(globalFlags, options) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3737,7 +3737,7 @@ async function runFoldersChatsAdd(globalFlags, folder, options) {
   return runWithTimeout(async () => {
     if (!options.chat) throw new Error('--chat is required');
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3762,7 +3762,7 @@ async function runFoldersChatsRemove(globalFlags, folder, options) {
   return runWithTimeout(async () => {
     if (!options.chat) throw new Error('--chat is required');
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -3786,7 +3786,7 @@ async function runFoldersJoin(globalFlags, link) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
+    const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
     try {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {

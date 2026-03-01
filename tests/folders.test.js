@@ -72,6 +72,48 @@ describe('getFolders', () => {
   });
 });
 
+describe('getFolders - error handling', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('propagates MTProto errors from getFolders', async () => {
+    tc.client.getFolders.mockRejectedValue(new Error('FLOOD_WAIT_30'));
+    await expect(tc.getFolders()).rejects.toThrow('FLOOD_WAIT_30');
+  });
+});
+
+describe('createFolder - error handling', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('propagates MTProto errors from createFolder', async () => {
+    tc.client.createFolder.mockRejectedValue(new Error('FILTER_TITLE_EMPTY'));
+    await expect(tc.createFolder({ title: 'Test' })).rejects.toThrow('FILTER_TITLE_EMPTY');
+  });
+});
+
+describe('editFolder - error handling', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('propagates MTProto errors from editFolder', async () => {
+    tc.client.findFolder.mockResolvedValue({ id: 1, _: 'dialogFilter' });
+    tc.client.editFolder.mockRejectedValue(new Error('FLOOD_WAIT_60'));
+    await expect(tc.editFolder('1', { title: 'New' })).rejects.toThrow('FLOOD_WAIT_60');
+  });
+});
+
+describe('deleteFolder - error handling', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('propagates MTProto errors from deleteFolder', async () => {
+    tc.client.findFolder.mockResolvedValue({ id: 2, _: 'dialogFilter' });
+    tc.client.deleteFolder.mockRejectedValue(new Error('FILTER_ID_INVALID'));
+    await expect(tc.deleteFolder('2')).rejects.toThrow('FILTER_ID_INVALID');
+  });
+});
+
 describe('findFolder', () => {
   let tc;
   beforeEach(() => { tc = createMockClient(); });
@@ -117,6 +159,14 @@ describe('showFolder', () => {
     const result = await tc.showFolder('1');
     expect(result).toMatchObject({ id: 1, title: 'Work', type: 'filter', contacts: true });
     expect(result.includePeers).toEqual([{ userId: 123 }]);
+  });
+
+  it('returns type=default for dialogFilterDefault', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 0, title: 'All Chats', _: 'dialogFilterDefault',
+    });
+    const result = await tc.showFolder('0');
+    expect(result.type).toBe('default');
   });
 
   it('throws when folder not found', async () => {
@@ -170,6 +220,14 @@ describe('createFolder', () => {
     expect(result.title).toBe('FromObj');
   });
 
+  it('throws when title is missing', async () => {
+    await expect(tc.createFolder({})).rejects.toThrow('Folder title is required');
+  });
+
+  it('throws when title is empty string', async () => {
+    await expect(tc.createFolder({ title: '' })).rejects.toThrow('Folder title is required');
+  });
+
   it('omits undefined optional params', async () => {
     tc.client.createFolder.mockResolvedValue({ id: 7, title: 'Min' });
     await tc.createFolder({ title: 'Min' });
@@ -211,6 +269,16 @@ describe('editFolder', () => {
       modification: {},
     });
     expect(result.title).toBe('Same');
+  });
+
+  it('maps emoji to emoticon in modification', async () => {
+    tc.client.findFolder.mockResolvedValue({ id: 1, _: 'dialogFilter' });
+    tc.client.editFolder.mockResolvedValue({ id: 1, title: 'T' });
+    await tc.editFolder('1', { emoji: '🎮' });
+    expect(tc.client.editFolder).toHaveBeenCalledWith({
+      folder: { id: 1, _: 'dialogFilter' },
+      modification: { emoticon: '🎮' },
+    });
   });
 
   it('passes boolean false correctly', async () => {
@@ -255,6 +323,10 @@ describe('setFoldersOrder', () => {
     const result = await tc.setFoldersOrder([1, 2, 3]);
     expect(tc.client.setFoldersOrder).toHaveBeenCalledWith([1, 2, 3]);
     expect(result).toEqual({ ok: true });
+  });
+
+  it('throws on empty array', () => {
+    return expect(tc.setFoldersOrder([])).rejects.toThrow('At least one folder ID is required');
   });
 
   it('throws on negative id', () => {
@@ -432,8 +504,12 @@ describe('_extractPeerId', () => {
     expect(tc._extractPeerId(123)).toBe('123');
   });
 
-  it('returns string for null', () => {
-    expect(tc._extractPeerId(null)).toBe('null');
+  it('throws for null peer', () => {
+    expect(() => tc._extractPeerId(null)).toThrow('Peer is null, cannot extract ID');
+  });
+
+  it('throws for undefined peer', () => {
+    expect(() => tc._extractPeerId(undefined)).toThrow('Peer is undefined, cannot extract ID');
   });
 
   it('throws for object without recognized fields', () => {
