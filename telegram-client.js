@@ -1391,7 +1391,7 @@ class TelegramClient {
 
   async joinChatlist(link) {
     await this.ensureLogin();
-    if (!/^https?:\/\/t\.me\/addlist\/[a-zA-Z0-9_-]+\/?$/.test(link)) {
+    if (!/^https?:\/\/t\.me\/addlist\/[a-zA-Z0-9_-]+\/?(\?[^\s]*)?$/.test(link)) {
       throw new Error(`Invalid chatlist link: ${link}. Expected format: https://t.me/addlist/<slug>`);
     }
     const result = await this.client.joinChatlist(link);

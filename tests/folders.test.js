@@ -344,6 +344,13 @@ describe('setFoldersOrder', () => {
   it('throws on duplicate ids', () => {
     return expect(tc.setFoldersOrder([1, 2, 1])).rejects.toThrow('Duplicate folder IDs');
   });
+
+  it('accepts id=0 (default folder)', async () => {
+    tc.client.setFoldersOrder.mockResolvedValue(undefined);
+    const result = await tc.setFoldersOrder([0, 1, 2]);
+    expect(tc.client.setFoldersOrder).toHaveBeenCalledWith([0, 1, 2]);
+    expect(result).toEqual({ ok: true });
+  });
 });
 
 describe('addChatToFolder', () => {
@@ -454,6 +461,13 @@ describe('removeChatFromFolder', () => {
     expect(result).toEqual({ ok: true, folderId: 1 });
   });
 
+  it('throws when includePeers is undefined', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+    });
+    await expect(tc.removeChatFromFolder('1', 123)).rejects.toThrow('Chat 123 not found in folder 1');
+  });
+
   it('throws on empty includePeers', async () => {
     tc.client.findFolder.mockResolvedValue({
       id: 1, _: 'dialogFilter', includePeers: [],
@@ -536,6 +550,12 @@ describe('joinChatlist', () => {
   it('accepts http:// link', async () => {
     tc.client.joinChatlist.mockResolvedValue({ id: 10, title: 'Shared' });
     const result = await tc.joinChatlist('http://t.me/addlist/abc123');
+    expect(result).toMatchObject({ id: 10, type: 'chatlist' });
+  });
+
+  it('accepts link with query parameters', async () => {
+    tc.client.joinChatlist.mockResolvedValue({ id: 10, title: 'Shared' });
+    const result = await tc.joinChatlist('https://t.me/addlist/abc123?ref=foo');
     expect(result).toMatchObject({ id: 10, type: 'chatlist' });
   });
 
