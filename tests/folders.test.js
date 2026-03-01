@@ -125,6 +125,58 @@ describe('showFolder', () => {
   });
 });
 
+describe('createFolder', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('creates a folder with all optional params', async () => {
+    tc.client.createFolder.mockResolvedValue({ id: 5, title: 'Dev' });
+    const result = await tc.createFolder({
+      title: 'Dev',
+      emoji: '💻',
+      contacts: true,
+      nonContacts: false,
+      groups: true,
+      broadcasts: false,
+      bots: true,
+      excludeMuted: true,
+      excludeRead: false,
+      excludeArchived: true,
+      includePeers: [1, 2],
+      excludePeers: [3],
+      pinnedPeers: [4],
+    });
+    expect(tc.client.createFolder).toHaveBeenCalledWith({
+      title: 'Dev',
+      emoticon: '💻',
+      contacts: true,
+      nonContacts: false,
+      groups: true,
+      broadcasts: false,
+      bots: true,
+      excludeMuted: true,
+      excludeRead: false,
+      excludeArchived: true,
+      includePeers: [1, 2],
+      excludePeers: [3],
+      pinnedPeers: [4],
+    });
+    expect(result).toEqual({ id: 5, title: 'Dev' });
+  });
+
+  it('handles title as object in result', async () => {
+    tc.client.createFolder.mockResolvedValue({ id: 6, title: { text: 'FromObj' } });
+    const result = await tc.createFolder({ title: 'Test' });
+    expect(result.title).toBe('FromObj');
+  });
+
+  it('omits undefined optional params', async () => {
+    tc.client.createFolder.mockResolvedValue({ id: 7, title: 'Min' });
+    await tc.createFolder({ title: 'Min' });
+    expect(tc.client.createFolder).toHaveBeenCalledWith({ title: 'Min' });
+  });
+});
+
 describe('editFolder', () => {
   let tc;
   beforeEach(() => { tc = createMockClient(); });
@@ -195,10 +247,11 @@ describe('setFoldersOrder', () => {
   });
 
   it('throws on negative id', () => {
-    expect(() => {
-      // setFoldersOrder is async but the throw happens in sync map
-    }).not.toThrow();
     return expect(tc.setFoldersOrder([-1, 2])).rejects.toThrow('Invalid folder ID: -1');
+  });
+
+  it('throws on NaN string', () => {
+    return expect(tc.setFoldersOrder(['abc'])).rejects.toThrow('Invalid folder ID: abc');
   });
 
   it('throws on non-integer', () => {
@@ -224,6 +277,28 @@ describe('addChatToFolder', () => {
       folder: expect.objectContaining({ id: 1 }),
       modification: { includePeers: [123] },
     });
+    expect(result).toEqual({ ok: true, folderId: 1 });
+  });
+
+  it('adds chat when includePeers is null', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter', includePeers: null,
+    });
+    tc.client.editFolder.mockResolvedValue({ id: 1 });
+    const result = await tc.addChatToFolder('1', 123);
+    expect(tc.client.editFolder).toHaveBeenCalledWith({
+      folder: expect.objectContaining({ id: 1 }),
+      modification: { includePeers: [123] },
+    });
+    expect(result).toEqual({ ok: true, folderId: 1 });
+  });
+
+  it('adds chat when includePeers is undefined', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter',
+    });
+    tc.client.editFolder.mockResolvedValue({ id: 1 });
+    const result = await tc.addChatToFolder('1', 456);
     expect(result).toEqual({ ok: true, folderId: 1 });
   });
 
@@ -262,6 +337,13 @@ describe('removeChatFromFolder', () => {
   it('throws if chat not found in folder', async () => {
     tc.client.findFolder.mockResolvedValue({
       id: 1, _: 'dialogFilter', includePeers: [{ userId: 456 }],
+    });
+    await expect(tc.removeChatFromFolder('1', 123)).rejects.toThrow('Chat 123 not found in folder 1');
+  });
+
+  it('throws on empty includePeers', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter', includePeers: [],
     });
     await expect(tc.removeChatFromFolder('1', 123)).rejects.toThrow('Chat 123 not found in folder 1');
   });
@@ -326,6 +408,18 @@ describe('joinChatlist', () => {
     tc.client.joinChatlist.mockResolvedValue({ id: 10, title: 'Shared List' });
     const result = await tc.joinChatlist('https://t.me/addlist/abc123');
     expect(result).toMatchObject({ id: 10, title: 'Shared List', type: 'chatlist' });
+  });
+
+  it('accepts link with trailing slash', async () => {
+    tc.client.joinChatlist.mockResolvedValue({ id: 10, title: 'Shared' });
+    const result = await tc.joinChatlist('https://t.me/addlist/abc123/');
+    expect(result).toMatchObject({ id: 10, type: 'chatlist' });
+  });
+
+  it('accepts http:// link', async () => {
+    tc.client.joinChatlist.mockResolvedValue({ id: 10, title: 'Shared' });
+    const result = await tc.joinChatlist('http://t.me/addlist/abc123');
+    expect(result).toMatchObject({ id: 10, type: 'chatlist' });
   });
 
   it('throws on invalid link', async () => {

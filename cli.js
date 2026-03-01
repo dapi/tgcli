@@ -3710,11 +3710,12 @@ async function runFoldersReorder(globalFlags, options) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      const ids = options.ids.split(',').map((s) => {
+      const ids = options.ids.split(',').filter((s) => s.trim() !== '').map((s) => {
         const n = Number(s.trim());
         if (!Number.isInteger(n) || n < 0) throw new Error(`Invalid folder ID: ${s.trim()}`);
         return n;
       });
+      if (ids.length === 0) throw new Error('At least one folder ID is required');
       const unique = new Set(ids);
       if (unique.size !== ids.length) throw new Error('Duplicate folder IDs are not allowed');
       const result = await telegramClient.setFoldersOrder(ids);
