@@ -416,6 +416,17 @@ describe('addChatToFolder', () => {
     await expect(tc.addChatToFolder('1', 789)).rejects.toThrow('Chat 789 already in folder 1');
   });
 
+  it('does not mutate original includePeers array', async () => {
+    const originalPeers = [{ userId: 456 }];
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, _: 'dialogFilter', includePeers: originalPeers,
+    });
+    tc.client.editFolder.mockResolvedValue({ id: 1 });
+    await tc.addChatToFolder('1', 789);
+    expect(originalPeers).toHaveLength(1);
+    expect(originalPeers[0]).toEqual({ userId: 456 });
+  });
+
   it('throws on default folder', async () => {
     tc.client.findFolder.mockResolvedValue({ id: 0, _: 'dialogFilterDefault' });
     await expect(tc.addChatToFolder('0', 123)).rejects.toThrow('Cannot modify the default');
