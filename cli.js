@@ -975,8 +975,8 @@ function parsePositiveInt(value, label) {
     return null;
   }
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive number`);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`);
   }
   return parsed;
 }
