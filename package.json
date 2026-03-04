@@ -50,6 +50,9 @@
     "url": "https://github.com/dapi/tgcli/issues"
   },
   "homepage": "https://github.com/dapi/tgcli#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@mtcute/core": "^0.27.8",

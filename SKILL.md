@@ -20,10 +20,10 @@ Install this skill from GitHub:
 npx skills add dapi/tgcli --skill tgcli --agent '*' -g -y
 ```
 
-Install CLI (dapi fork):
+Install CLI:
 
 ```bash
-npm install -g github:dapi/tgcli
+npm install -g @dapi/tgcli
 ```
 
 Authenticate once:
@@ -48,7 +48,7 @@ tgcli auth
 
 ## Execution Rules
 
-- If `tgcli` is not found, install it: `npm install -g github:dapi/tgcli` then run `tgcli auth` for first-time login.
+- If `tgcli` is not found, install it: `npm install -g @dapi/tgcli` then run `tgcli auth` for first-time login.
 - Always add `--json` for agent workflows.
 - Add `--timeout 30s` by default; use `--timeout 90s` for heavy archive fallback reads.
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.

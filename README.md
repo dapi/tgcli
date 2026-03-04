@@ -15,20 +15,13 @@ curl -fsSL https://raw.githubusercontent.com/dapi/tgcli/main/install.sh | bash
 Install CLI only:
 
 ```bash
-npm install -g github:dapi/tgcli
+npm install -g @dapi/tgcli
 ```
 
 Install skill for AI agents:
 
 ```bash
 npx skills add dapi/tgcli --skill tgcli --agent '*' -g -y
-```
-
-Also available via brew and npm:
-
-```bash
-brew install dapi/tap/tgcli
-npm install -g @dapi/tgcli
 ```
 
 Restart your agent session after skill installation so the new skill is picked up.
