@@ -60,7 +60,9 @@ tgcli messages list --chat @username --limit 20
 tgcli messages search "course" --chat @channel --source archive
 tgcli send text --to @username --message "hello"
 tgcli send text --to @username --message "**hi**" --parse-mode markdown
+tgcli send text --to @username --message "done" --reply-to 123
 tgcli send file --to @channel --file ./report.pdf --caption "<b>weekly report</b>" --parse-mode html
+tgcli send file --to @channel --file ./report.pdf --reply-to 123
 tgcli server
 ```
 

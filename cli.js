@@ -223,6 +223,7 @@ function buildProgram() {
     .option('--message <text>', 'Message text')
     .option('--parse-mode <mode>', 'Parse mode: markdown|html|none')
     .option('--topic <id>', 'Forum topic id')
+    .option('--reply-to <id>', 'Reply to message id')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
   send
     .command('file')
@@ -233,6 +234,7 @@ function buildProgram() {
     .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
     .option('--filename <name>', 'Override filename')
     .option('--topic <id>', 'Forum topic id')
+    .option('--reply-to <id>', 'Reply to message id')
     .action(withGlobalOptions((globalFlags, options) => runSendFile(globalFlags, options)));
 
   const media = program.command('media').description('Download media');
@@ -973,8 +975,8 @@ function parsePositiveInt(value, label) {
     return null;
   }
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive number`);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`);
   }
   return parsed;
 }
@@ -2692,8 +2694,10 @@ async function runSendText(globalFlags, options = {}) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
       const topicId = parsePositiveInt(options.topic, '--topic');
+      const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
       const result = await telegramClient.sendTextMessage(options.to, options.message, {
         topicId,
+        replyToMessageId,
         parseMode,
       });
       const payload = { channelId: options.to, ...result };
@@ -2732,10 +2736,12 @@ async function runSendFile(globalFlags, options = {}) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
       const topicId = parsePositiveInt(options.topic, '--topic');
+      const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
       const result = await telegramClient.sendFileMessage(options.to, options.file, {
         caption: options.caption,
         filename: options.filename,
         topicId,
+        replyToMessageId,
         parseMode,
       });
       const payload = { channelId: options.to, ...result };

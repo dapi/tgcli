@@ -131,7 +131,7 @@ This document defines the consolidated MCP tool surface. The goal is fewer tools
 - Output: { messageId }.
 
 ### messagesSendFile
-- Params: channelId (required), filePath (required), caption?, filename?, topicId?
+- Params: channelId (required), filePath (required), caption?, filename?, topicId?, replyToMessageId?
 - Output: { messageId }.
 
 ## Media
