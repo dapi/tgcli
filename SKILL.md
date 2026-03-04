@@ -5,7 +5,7 @@ description: >
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
   contacts, groups, tags, media downloads, and archive/sync status.
   Also covers group admin (rename, members, invite links, join/leave).
-  For reply/edit/delete/reactions/inline buttons, use telegram-mcp instead.
+  For edit/delete/reactions/inline buttons, use telegram-mcp instead.
 ---
 
 # tgcli
@@ -36,7 +36,7 @@ tgcli auth
 
 | Use tgcli for | Use telegram-mcp for |
 |-|-|
-| Read/search/archive messages | reply/edit/delete/forward |
+| Read/search/archive messages | edit/delete/forward |
 | Send text/files and topic posts | reactions |
 | | Send photo with preview (image as cover) via `send_file` |
 | Forum topics listing/search | inline bot buttons |
@@ -55,6 +55,7 @@ tgcli auth
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send file`, `--parse-mode` requires `--caption`
+  - `--reply-to <messageId>` replies to a specific message; if both `--reply-to` and `--topic` are passed, `--reply-to` wins
 - Never delete lock files (`LOCK`, `database is locked`): wait and retry.
 
 ## Core Command Patterns
@@ -88,10 +89,12 @@ Both positional query and `--query` flag work. `--chat` accepts multiple values.
 ```bash
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
 tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --parse-mode markdown --json --timeout 30s
+tgcli send text --to <id|@username> --message "Done" --reply-to <messageId> --json --timeout 30s
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --filename custom-name.pdf --json --timeout 30s
+tgcli send file --to <id|@username> --file /path/to/file --reply-to <messageId> --json --timeout 30s
 ```
 
 ### Post with Cover Image (Photo + Caption)
@@ -284,6 +287,7 @@ Alternative without systemd service (one-shot or foreground):
 - "tag channels by topic"
 - "add user to telegram group"
 - "get invite link for group"
+- "reply to a specific telegram message"
 - "start syncing this channel"
 - "monitor my telegram channels"
 - "прочитай сообщения в канале"
@@ -297,7 +301,7 @@ Alternative without systemd service (one-shot or foreground):
 
 ### Should not trigger
 
-- "reply/edit/delete/forward telegram message"
+- "edit/delete/forward telegram message"
 - "react with emoji to message"
 - "click inline button in bot"
 - "ban/kick/promote user with granular permissions"

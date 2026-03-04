@@ -828,7 +828,9 @@ class TelegramClient {
     const fileName = typeof options.filename === 'string' && options.filename.trim()
       ? options.filename.trim()
       : undefined;
-    const replyTo = Number.isFinite(options.topicId) ? options.topicId : undefined;
+    const replyTo = Number.isFinite(options.replyToMessageId)
+      ? options.replyToMessageId
+      : (Number.isFinite(options.topicId) ? options.topicId : undefined);
     const params = replyTo ? { replyTo } : undefined;
     const media = InputMedia.auto(uploadPath, {
       caption: parsedCaption,

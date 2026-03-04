@@ -465,6 +465,12 @@ const messagesSendFileSchema = {
     .positive()
     .optional()
     .describe("Optional forum topic ID to send into"),
+  replyToMessageId: z
+    .number({ invalid_type_error: "replyToMessageId must be a number" })
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional message ID to reply to"),
 };
 
 const mediaDownloadSchema = {
@@ -1343,12 +1349,13 @@ function createServerInstance() {
     "messagesSendFile",
     "Sends a file with an optional caption.",
     messagesSendFileSchema,
-    async ({ channelId, filePath, caption, filename, topicId }) => {
+    async ({ channelId, filePath, caption, filename, topicId, replyToMessageId }) => {
       await telegramClient.ensureLogin();
       const result = await telegramClient.sendFileMessage(channelId, filePath, {
         caption,
         filename,
         topicId,
+        replyToMessageId,
       });
 
       return {
