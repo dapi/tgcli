@@ -1,0 +1,4 @@
+[tools]
+node = "20"
+ruby = "3.4.8"
+yarn = "1"
