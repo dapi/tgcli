@@ -86,16 +86,24 @@ describe('sendTextMessage parse-mode', () => {
 
   it('--parse-mode markdown calls md() and passes result to sendText', async () => {
     await tc.sendTextMessage('@chat', 'hello **bold**', { parseMode: 'markdown' });
+    expect(md).toHaveBeenCalledTimes(1);
     expect(md).toHaveBeenCalledWith('hello **bold**');
-    const parsedResult = md('hello **bold**');
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', parsedResult, undefined);
+    expect(tc.client.sendText).toHaveBeenCalledWith(
+      '@chat',
+      { text: 'hello **bold**', entities: [{ type: 'bold' }] },
+      undefined,
+    );
   });
 
   it('--parse-mode html calls html() and passes result to sendText', async () => {
     await tc.sendTextMessage('@chat', 'hello <b>bold</b>', { parseMode: 'html' });
+    expect(html).toHaveBeenCalledTimes(1);
     expect(html).toHaveBeenCalledWith('hello <b>bold</b>');
-    const parsedResult = html('hello <b>bold</b>');
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', parsedResult, undefined);
+    expect(tc.client.sendText).toHaveBeenCalledWith(
+      '@chat',
+      { text: 'hello <b>bold</b>', entities: [{ type: 'italic' }] },
+      undefined,
+    );
   });
 
   it('--parse-mode none sends text as-is without calling parsers', async () => {
