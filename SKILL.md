@@ -55,6 +55,7 @@ tgcli auth
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send file`, `--parse-mode` requires `--caption`
+  - **`send text --parse-mode` is NOT yet implemented** (see [#7](https://github.com/dapi/tgcli/issues/7)). All text is sent as plain text. Markdown links `[text](url)`, bold, etc. will not render. Include URLs as plain text — Telegram auto-generates preview.
   - `--reply-to <messageId>` replies to a specific message; if both `--reply-to` and `--topic` are passed, `--reply-to` wins
 - Never delete lock files (`LOCK`, `database is locked`): wait and retry.
 
