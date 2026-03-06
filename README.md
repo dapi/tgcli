@@ -88,6 +88,35 @@ tgcli doctor         Diagnostics and sanity checks
 
 Use `tgcli [command] --help` for details. Add `--json` for machine-readable output.
 
+### send text
+
+Send a text message to a user, group, or channel.
+
+| Flag | Description |
+|-|-|
+| `--to` | Recipient: `@username`, phone number, or chat ID |
+| `--message` | Message body |
+| `--parse-mode` | `markdown`, `html`, or `none` (default: plain text) |
+| `--reply-to` | Message ID to reply to |
+
+The `markdown` mode uses **mtcute's own Markdown dialect**, which differs from
+Telegram Bot API MarkdownV2. See [mtcute docs](https://mtcute.dev/guide/topics/parsers.html)
+for the supported syntax.
+
+```bash
+# Markdown (mtcute dialect, not Bot API MarkdownV2)
+tgcli send text --to @username --message "Check [this link](https://example.com)" --parse-mode markdown
+
+# HTML
+tgcli send text --to @username --message "Check <a href='https://example.com'>this link</a>" --parse-mode html
+
+# Explicit plain text (same as default)
+tgcli send text --to @username --message "Hello world" --parse-mode none
+
+# Plain text (default, no flag)
+tgcli send text --to @username --message "Hello world"
+```
+
 ## MCP (optional)
 
 Enable it via config:
