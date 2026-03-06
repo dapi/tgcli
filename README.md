@@ -57,6 +57,19 @@ If confirmation codes in-app do not arrive, you can use QR login:
 tgcli auth --qr
 ```
 
+Other auth variants:
+
+```bash
+# Ask Telegram to resend code via SMS (when available)
+tgcli auth --force-sms
+
+# Verbose MTProto logs for troubleshooting auth
+MTCUTE_LOG_LEVEL=5 tgcli auth
+
+# Verbose logs with QR flow
+MTCUTE_LOG_LEVEL=5 tgcli auth --qr
+```
+
 ## Quick start
 
 ```bash
