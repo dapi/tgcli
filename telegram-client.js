@@ -460,17 +460,28 @@ class TelegramClient {
   }
 
   async _askQuestion(prompt) {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    return new Promise(resolve => {
-      rl.question(prompt, answer => {
-        rl.close();
-        resolve(answer.trim());
+    const ask = () => {
+      if (process.stdin.isPaused()) {
+        process.stdin.resume();
+      }
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
       });
-    });
+
+      return new Promise(resolve => {
+        rl.question(prompt, answer => {
+          rl.close();
+          resolve(answer.trim());
+        });
+      });
+    };
+
+    let answer = await ask();
+    if (!answer) {
+      answer = await ask();
+    }
+    return answer;
   }
 
   async _askHiddenQuestion(prompt) {
@@ -478,6 +489,9 @@ class TelegramClient {
       return this._askQuestion(prompt);
     }
 
+    if (process.stdin.isPaused()) {
+      process.stdin.resume();
+    }
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
