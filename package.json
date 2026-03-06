@@ -54,7 +54,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@mtcute/core": "^0.27.8",
     "@mtcute/node": "^0.27.8",
     "better-sqlite3": "^12.6.0",
