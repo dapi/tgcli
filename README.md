@@ -110,7 +110,10 @@ tgcli send text --to @username --message "Check [this link](https://example.com)
 # HTML
 tgcli send text --to @username --message "Check <a href='https://example.com'>this link</a>" --parse-mode html
 
-# Plain text (default)
+# Explicit plain text (same as default)
+tgcli send text --to @username --message "Hello world" --parse-mode none
+
+# Plain text (default, no flag)
 tgcli send text --to @username --message "Hello world"
 ```
 

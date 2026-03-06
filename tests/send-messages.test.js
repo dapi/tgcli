@@ -120,6 +120,12 @@ describe('sendTextMessage parse-mode', () => {
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'plain text', undefined);
   });
 
+  it('parseMode is case-insensitive', async () => {
+    await tc.sendTextMessage('@chat', '**bold**', { parseMode: 'Markdown' });
+    expect(md).toHaveBeenCalledTimes(1);
+    expect(md).toHaveBeenCalledWith('**bold**');
+  });
+
   it('invalid parseMode throws error', async () => {
     await expect(
       tc.sendTextMessage('@chat', 'text', { parseMode: 'xml' }),
