@@ -43,6 +43,7 @@ function buildProgram() {
   const auth = program.command('auth').description('Authentication and session setup');
   auth
     .option('--follow', 'Continue syncing after login')
+    .option('--force-sms', 'Force SMS code delivery instead of in-app')
     .action(withGlobalOptions((globalFlags, options) =>
       runAuthLogin(globalFlags, options),
     ));
@@ -1285,7 +1286,7 @@ async function runAuthLogin(globalFlags, options = {}) {
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const config = await ensureStoreConfig(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir, config });
+    const { telegramClient, messageSyncService } = createServices({ storeDir, config, forceSms: options.forceSms });
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {

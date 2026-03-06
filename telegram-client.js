@@ -392,6 +392,7 @@ class TelegramClient {
     this.apiHash = sanitizeString(apiHash);
     this.phoneNumber = sanitizeString(phoneNumber);
     this.sessionPath = path.resolve(sessionPath);
+    this.options = options;
 
     const dataDir = path.dirname(this.sessionPath);
     if (!fs.existsSync(dataDir)) {
@@ -532,6 +533,23 @@ class TelegramClient {
         password: async () => {
           const value = await this._askHiddenQuestion('Enter your 2FA password (leave empty if not enabled): ');
           return value.length ? value : undefined;
+        },
+        codeSentCallback: async (sentCode) => {
+          if (this.options.forceSms && (sentCode.type === 'app' || sentCode.type === 'email')) {
+            try {
+              await this.client.resendCode({ phone: this.phoneNumber, phoneCodeHash: sentCode.phoneCodeHash });
+              console.log('Code re-sent via SMS.');
+            } catch (e) {
+              const msg = (e.text || e.message || '').toUpperCase();
+              if (msg.includes('SEND_CODE_UNAVAILABLE')) {
+                console.log('SMS unavailable for this number. Please use the code sent via app.');
+              } else {
+                console.log(`Could not request SMS (${e.text || e.message}). Using code sent via ${sentCode.type}.`);
+              }
+            }
+          } else {
+            console.log(`The confirmation code has been sent via ${sentCode.type}.`);
+          }
         },
       });
 
