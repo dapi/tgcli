@@ -51,6 +51,12 @@ Then authenticate:
 tgcli auth
 ```
 
+If confirmation codes in-app do not arrive, you can use QR login:
+
+```bash
+tgcli auth --qr
+```
+
 ## Quick start
 
 ```bash

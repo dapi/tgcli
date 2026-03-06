@@ -7,6 +7,7 @@ import fs from 'fs';
 import { stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import qrcode from 'qrcode-terminal';
 import readline from 'readline';
 import { Readable } from 'stream';
 import { nodeReadableToFuman } from '@fuman/node';
@@ -523,18 +524,33 @@ class TelegramClient {
         return true;
       }
 
-      if (!this.phoneNumber) {
+      if (!this.options.useQr && !this.phoneNumber) {
         throw new Error('TELEGRAM_PHONE_NUMBER is not configured.');
       }
 
-      await this.client.start({
-        phone: this.phoneNumber,
-        code: async () => await this._askQuestion('Enter the code you received: '),
+      const startParams = {
         password: async () => {
           const value = await this._askHiddenQuestion('Enter your 2FA password (leave empty if not enabled): ');
           return value.length ? value : undefined;
         },
-        codeSentCallback: async (sentCode) => {
+      };
+
+      if (this.options.useQr) {
+        startParams.qrCodeHandler = (url, expiresAt) => {
+          const expiresLabel = expiresAt instanceof Date && !Number.isNaN(expiresAt.getTime())
+            ? expiresAt.toISOString()
+            : 'unknown';
+          console.log('\nScan this QR code in Telegram: Settings -> Devices -> Link Desktop Device');
+          qrcode.generate(url, { small: true }, (rendered) => {
+            console.log(rendered);
+          });
+          console.log(`QR login URL: ${url}`);
+          console.log(`QR expires at: ${expiresLabel}`);
+        };
+      } else {
+        startParams.phone = this.phoneNumber;
+        startParams.code = async () => await this._askQuestion('Enter the code you received: ');
+        startParams.codeSentCallback = async (sentCode) => {
           if (this.options.forceSms && (sentCode.type === 'app' || sentCode.type === 'email')) {
             try {
               await this.client.resendCode({ phone: this.phoneNumber, phoneCodeHash: sentCode.phoneCodeHash });
@@ -550,8 +566,10 @@ class TelegramClient {
           } else {
             console.log(`The confirmation code has been sent via ${sentCode.type}.`);
           }
-        },
-      });
+        };
+      }
+
+      await this.client.start(startParams);
 
       console.log('Logged in successfully!');
       return true;

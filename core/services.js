@@ -35,7 +35,7 @@ export function createServices(options = {}) {
     config.apiHash,
     config.phoneNumber,
     sessionPath,
-    { forceSms: options.forceSms ?? false },
+    { forceSms: options.forceSms ?? false, useQr: options.useQr ?? false },
   );
 
   const messageSyncService = new MessageSyncService(telegramClient, {

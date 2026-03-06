@@ -44,6 +44,7 @@ function buildProgram() {
   auth
     .option('--follow', 'Continue syncing after login')
     .option('--force-sms', 'Force SMS code delivery instead of in-app')
+    .option('--qr', 'Use QR-code login flow instead of confirmation code')
     .action(withGlobalOptions((globalFlags, options) =>
       runAuthLogin(globalFlags, options),
     ));
@@ -1286,7 +1287,12 @@ async function runAuthLogin(globalFlags, options = {}) {
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const config = await ensureStoreConfig(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir, config, forceSms: options.forceSms });
+    const { telegramClient, messageSyncService } = createServices({
+      storeDir,
+      config,
+      forceSms: options.forceSms,
+      useQr: options.qr,
+    });
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
