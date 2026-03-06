@@ -211,6 +211,7 @@ tgcli service logs --json --timeout 30s
 ### Config & Auth
 
 ```bash
+tgcli auth --qr --json --timeout 30s
 tgcli auth status --json --timeout 30s
 tgcli auth logout --json --timeout 30s
 tgcli config list --json --timeout 30s

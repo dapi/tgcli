@@ -414,14 +414,46 @@ class TelegramClient {
         this.updateEmitter.emit('channelTooLong', { channelId, diff });
       },
     };
+    this.updatesConfig = updatesConfig;
+    this.client = this._createClient();
+  }
 
-    this.client = new MtCuteClient({
+  _createClient() {
+    return new MtCuteClient({
       apiId: this.apiId,
       apiHash: this.apiHash,
       storage: this.sessionPath,
       platform: createPlatform(),
-      updates: updatesConfig,
+      updates: this.updatesConfig,
     });
+  }
+
+  _isAuthKeyUnregisteredError(error) {
+    if (!error) return false;
+    const code = error.code || error.status || error.errorCode;
+    const message = (error.errorMessage || error.text || error.message || '').toUpperCase();
+    return code === 401 && message.includes('AUTH_KEY_UNREGISTERED');
+  }
+
+  async _resetSessionAndClient() {
+    const sessionFiles = [this.sessionPath, `${this.sessionPath}-wal`, `${this.sessionPath}-shm`];
+    for (const filePath of sessionFiles) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+    try {
+      await this.client.destroy();
+    } catch (error) {
+      console.warn('[warning] failed to destroy MTProto client during reset:', error?.message || error);
+    }
+    this.client = this._createClient();
+    this.updatesRunning = false;
+    this.rawUpdateHandler = null;
   }
 
   _isUnauthorizedError(error) {
@@ -517,7 +549,7 @@ class TelegramClient {
     });
   }
 
-  async login() {
+  async login(retriedAfterReset = false) {
     try {
       if (await this._isAuthorized()) {
         console.log('Existing session is valid.');
@@ -574,6 +606,16 @@ class TelegramClient {
       console.log('Logged in successfully!');
       return true;
     } catch (error) {
+      if (!retriedAfterReset && this._isAuthKeyUnregisteredError(error)) {
+        console.log('Detected AUTH_KEY_UNREGISTERED. Resetting local session and retrying login once...');
+        try {
+          await this._resetSessionAndClient();
+          return await this.login(true);
+        } catch (resetError) {
+          console.error('Failed to recover from AUTH_KEY_UNREGISTERED:', resetError);
+          return false;
+        }
+      }
       console.error('Error during login:', error);
       return false;
     }
