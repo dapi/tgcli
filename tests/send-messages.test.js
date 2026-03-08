@@ -1,3 +1,11 @@
+vi.mock('@mtcute/node', () => ({
+  TelegramClient: vi.fn(),
+}));
+vi.mock('@mtcute/core', () => ({
+  InputMedia: {
+    auto: vi.fn((path, opts) => ({ path, ...opts })),
+  },
+}));
 vi.mock('@mtcute/markdown-parser', () => ({
   md: vi.fn((text) => ({ text, entities: [{ type: 'bold' }] })),
 }));
@@ -136,5 +144,139 @@ describe('sendTextMessage parse-mode', () => {
     await expect(
       tc.sendTextMessage('@chat', '', { parseMode: 'markdown' }),
     ).rejects.toThrow('Message text cannot be empty.');
+  });
+});
+
+describe('sendTextMessage new send parameters', () => {
+  let tc;
+
+  beforeEach(() => {
+    tc = createMockClient();
+  });
+
+  it('--silent passes silent: true in params', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { silent: true });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { silent: true });
+  });
+
+  it('--no-forwards passes noforwards: true in params', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { noforwards: true });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { noforwards: true });
+  });
+
+  it('--schedule passes scheduleDate as unix timestamp in params', async () => {
+    const scheduleDate = Math.floor(Date.now() / 1000) + 3600;
+    await tc.sendTextMessage('@chat', 'hello', { scheduleDate });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { scheduleDate });
+  });
+
+  it('combined silent + replyTo passes both in params', async () => {
+    await tc.sendTextMessage('@chat', 'hello', {
+      silent: true,
+      replyToMessageId: 55,
+    });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', {
+      silent: true,
+      replyTo: 55,
+    });
+  });
+
+  it('combined silent + noforwards + scheduleDate passes all in params', async () => {
+    const scheduleDate = Math.floor(Date.now() / 1000) + 7200;
+    await tc.sendTextMessage('@chat', 'hello', {
+      silent: true,
+      noforwards: true,
+      scheduleDate,
+    });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', {
+      silent: true,
+      noforwards: true,
+      scheduleDate,
+    });
+  });
+
+  it('no new params still sends undefined params (backward compat)', async () => {
+    await tc.sendTextMessage('@chat', 'hello');
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
+  });
+});
+
+describe('sendFileMessage new send parameters', () => {
+  let tc;
+  let temp;
+
+  beforeEach(() => {
+    tc = createMockClient();
+    temp = createTempFile();
+  });
+
+  afterEach(() => {
+    fs.rmSync(temp.dir, { recursive: true, force: true });
+  });
+
+  it('--silent passes silent: true in params', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { silent: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { silent: true });
+  });
+
+  it('--no-forwards passes noforwards: true in params', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { noforwards: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { noforwards: true });
+  });
+
+  it('--schedule passes scheduleDate in params', async () => {
+    const scheduleDate = Math.floor(Date.now() / 1000) + 3600;
+    await tc.sendFileMessage('@chat', temp.filePath, { scheduleDate });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { scheduleDate });
+  });
+
+  it('--caption-above passes invertMedia: true in params', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, {
+      caption: 'my caption',
+      captionAbove: true,
+    });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { invertMedia: true });
+  });
+
+  it('--caption-above without caption throws error', async () => {
+    await expect(
+      tc.sendFileMessage('@chat', temp.filePath, { captionAbove: true }),
+    ).rejects.toThrow('--caption-above requires --caption for send file');
+  });
+
+  it('--spoiler passes spoiler: true in InputMedia.auto options', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { spoiler: true });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.auto).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ spoiler: true }),
+    );
+  });
+
+  it('--force-document passes forceDocument: true in InputMedia.auto options', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { forceDocument: true });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.auto).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ forceDocument: true }),
+    );
+  });
+
+  it('combined silent + noforwards + replyTo passes all in params', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, {
+      silent: true,
+      noforwards: true,
+      replyToMessageId: 99,
+    });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), {
+      silent: true,
+      noforwards: true,
+      replyTo: 99,
+    });
+  });
+
+  it('no new params still sends undefined params (backward compat)', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, {});
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), undefined);
   });
 });
