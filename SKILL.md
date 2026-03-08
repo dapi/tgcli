@@ -101,6 +101,7 @@ Both positional query and `--query` flag work. `--chat` accepts multiple values.
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
 tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --parse-mode markdown --json --timeout 30s
 tgcli send text --to <id|@username> --message "Done" --reply-to <messageId> --json --timeout 30s
+tgcli send text --to <id|@username> --message "https://example.com check this" --no-preview --json --timeout 30s
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s

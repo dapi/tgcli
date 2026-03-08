@@ -226,6 +226,7 @@ function buildProgram() {
     .option('--parse-mode <mode>', 'Parse mode: markdown|html|none')
     .option('--topic <id>', 'Forum topic id')
     .option('--reply-to <id>', 'Reply to message id')
+    .option('--no-preview', 'Disable link preview')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
   send
     .command('file')
@@ -2706,6 +2707,7 @@ async function runSendText(globalFlags, options = {}) {
         topicId,
         replyToMessageId,
         parseMode,
+        noPreview: options.noPreview,
       });
       const payload = { channelId: options.to, ...result };
 

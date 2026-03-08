@@ -449,6 +449,10 @@ const messagesSendSchema = {
     .positive()
     .optional()
     .describe("Optional message ID to reply to"),
+  noPreview: z
+    .boolean({ invalid_type_error: "noPreview must be a boolean" })
+    .optional()
+    .describe("Disable link preview in the message"),
 };
 
 const messagesSendFileSchema = {
@@ -1327,11 +1331,12 @@ function createServerInstance() {
     "messagesSend",
     "Sends a text message to a channel or chat.",
     messagesSendSchema,
-    async ({ channelId, text, topicId, replyToMessageId }) => {
+    async ({ channelId, text, topicId, replyToMessageId, noPreview }) => {
       await telegramClient.ensureLogin();
       const result = await telegramClient.sendTextMessage(channelId, text, {
         topicId,
         replyToMessageId,
+        noPreview,
       });
 
       return {
