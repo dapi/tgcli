@@ -195,6 +195,18 @@ describe('sendTextMessage new send parameters', () => {
     });
   });
 
+  it('noForwards (camelCase) passes noforwards: true in params', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { noForwards: true });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { noforwards: true });
+  });
+
+  it('schedule (ISO string) passes scheduleDate as unix timestamp', async () => {
+    const iso = '2027-01-15T09:00:00Z';
+    const expected = Math.floor(new Date(iso).getTime() / 1000);
+    await tc.sendTextMessage('@chat', 'hello', { schedule: iso });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { scheduleDate: expected });
+  });
+
   it('no new params still sends undefined params (backward compat)', async () => {
     await tc.sendTextMessage('@chat', 'hello');
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
@@ -260,6 +272,18 @@ describe('sendFileMessage new send parameters', () => {
       expect.stringContaining('file:'),
       expect.objectContaining({ forceDocument: true }),
     );
+  });
+
+  it('noForwards (camelCase) passes noforwards: true in params', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { noForwards: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { noforwards: true });
+  });
+
+  it('schedule (ISO string) passes scheduleDate as unix timestamp', async () => {
+    const iso = '2027-06-01T12:00:00Z';
+    const expected = Math.floor(new Date(iso).getTime() / 1000);
+    await tc.sendFileMessage('@chat', temp.filePath, { schedule: iso });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { scheduleDate: expected });
   });
 
   it('combined silent + noforwards + replyTo passes all in params', async () => {

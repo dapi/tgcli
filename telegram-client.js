@@ -153,6 +153,16 @@ function applyParseMode(text, parseMode) {
   return text;
 }
 
+function resolveScheduleDate(options) {
+  if (options.scheduleDate) return options.scheduleDate;
+  if (options.schedule) {
+    const date = new Date(options.schedule);
+    if (Number.isNaN(date.getTime())) return undefined;
+    return Math.floor(date.getTime() / 1000);
+  }
+  return undefined;
+}
+
 function coerceApiId(value) {
   if (typeof value === 'number') {
     return value;
@@ -897,8 +907,9 @@ class TelegramClient {
     if (replyTo) params.replyTo = replyTo;
     if (options.noPreview) params.noWebpage = true;
     if (options.silent) params.silent = true;
-    if (options.noforwards) params.noforwards = true;
-    if (options.scheduleDate) params.scheduleDate = options.scheduleDate;
+    if (options.noForwards || options.noforwards) params.noforwards = true;
+    const scheduleDate = resolveScheduleDate(options);
+    if (scheduleDate) params.scheduleDate = scheduleDate;
     const peerRef = normalizeChannelId(channelId);
     const finalParams = Object.keys(params).length ? params : undefined;
     const sent = await this.client.sendText(peerRef, inputText, finalParams);
@@ -935,8 +946,9 @@ class TelegramClient {
     const params = {};
     if (replyTo) params.replyTo = replyTo;
     if (options.silent) params.silent = true;
-    if (options.noforwards) params.noforwards = true;
-    if (options.scheduleDate) params.scheduleDate = options.scheduleDate;
+    if (options.noForwards || options.noforwards) params.noforwards = true;
+    const scheduleDate = resolveScheduleDate(options);
+    if (scheduleDate) params.scheduleDate = scheduleDate;
     if (options.captionAbove) params.invertMedia = true;
     const mediaOptions = {
       caption: parsedCaption,
