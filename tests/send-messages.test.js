@@ -304,3 +304,28 @@ describe('sendFileMessage new send parameters', () => {
     expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), undefined);
   });
 });
+
+describe('resolveScheduleDate error handling', () => {
+  let tc;
+
+  beforeEach(() => {
+    tc = createMockClient();
+  });
+
+  it('invalid ISO string throws error for sendTextMessage', async () => {
+    await expect(
+      tc.sendTextMessage('@chat', 'hello', { schedule: 'banana' }),
+    ).rejects.toThrow('Invalid schedule date: must be a valid ISO 8601 datetime');
+  });
+
+  it('invalid ISO string throws error for sendFileMessage', async () => {
+    const temp = createTempFile();
+    try {
+      await expect(
+        tc.sendFileMessage('@chat', temp.filePath, { schedule: 'not-a-date' }),
+      ).rejects.toThrow('Invalid schedule date: must be a valid ISO 8601 datetime');
+    } finally {
+      fs.rmSync(temp.dir, { recursive: true, force: true });
+    }
+  });
+});

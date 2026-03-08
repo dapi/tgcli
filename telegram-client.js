@@ -157,7 +157,9 @@ function resolveScheduleDate(options) {
   if (options.scheduleDate) return options.scheduleDate;
   if (options.schedule) {
     const date = new Date(options.schedule);
-    if (Number.isNaN(date.getTime())) return undefined;
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid schedule date: must be a valid ISO 8601 datetime');
+    }
     return Math.floor(date.getTime() / 1000);
   }
   return undefined;
