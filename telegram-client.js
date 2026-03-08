@@ -897,7 +897,8 @@ class TelegramClient {
     if (replyTo) params.replyTo = replyTo;
     if (options.noPreview) params.noWebpage = true;
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendText(peerRef, inputText, params);
+    const finalParams = Object.keys(params).length ? params : undefined;
+    const sent = await this.client.sendText(peerRef, inputText, finalParams);
     return { messageId: sent.id };
   }
 
