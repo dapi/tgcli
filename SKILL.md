@@ -86,6 +86,8 @@ Both positional query and `--query` flag work. `--chat` accepts multiple values.
 
 ### Send Text/File
 
+**⚠ `send` uses `--to` and `--message`, NOT `--chat`/`--text`.**
+
 ```bash
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
 tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --parse-mode markdown --json --timeout 30s
