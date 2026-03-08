@@ -56,6 +56,12 @@ tgcli auth
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send file`, `--parse-mode` requires `--caption`
   - `--reply-to <messageId>` replies to a specific message; if both `--reply-to` and `--topic` are passed, `--reply-to` wins
+  - `--silent` sends without notification sound
+  - `--no-forwards` protects message from forwarding/saving
+  - `--schedule <iso>` schedules message for future delivery (ISO 8601, must be in the future, within 365 days)
+  - `--caption-above` shows caption above media (`send file` only, requires `--caption`)
+  - `--spoiler` blurs media until tapped (`send file` only)
+  - `--force-document` sends photo/video as uncompressed document (`send file` only)
 - Telegram markdown formatting (when `--parse-mode markdown`):
   - Bold: `**text**`
   - Italic: `__text__` (double underscores, NOT single `_`)
@@ -102,11 +108,16 @@ tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
 tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --parse-mode markdown --json --timeout 30s
 tgcli send text --to <id|@username> --message "Done" --reply-to <messageId> --json --timeout 30s
 tgcli send text --to <id|@username> --message "https://example.com check this" --no-preview --json --timeout 30s
+tgcli send text --to <id|@username> --message "Nightly report" --silent --json --timeout 30s
+tgcli send text --to <id|@username> --message "Good morning!" --schedule "2025-01-15T09:00:00+03:00" --json --timeout 30s
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --filename custom-name.pdf --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --reply-to <messageId> --json --timeout 30s
+tgcli send file --to <id|@username> --file /path/to/file --caption "Breaking news" --caption-above --json --timeout 30s
+tgcli send file --to <id|@username> --file /path/to/photo.jpg --spoiler --json --timeout 30s
+tgcli send file --to <id|@username> --file /path/to/photo.jpg --force-document --json --timeout 30s
 ```
 
 ### Post with Cover Image (Photo + Caption)
@@ -124,7 +135,7 @@ For draft/approval flow:
 2. Review in Telegram
 3. If approved — resend to target channel
 
-Note: telegram-mcp `send_file` auto-detects .jpg/.png as photos with preview. tgcli `send file` always sends as document attachment.
+Note: telegram-mcp `send_file` auto-detects .jpg/.png as photos with preview. tgcli `send file` sends as auto-detected media by default; use `--force-document` to send as document attachment without preview.
 
 ### Media Download
 

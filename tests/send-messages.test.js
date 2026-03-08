@@ -328,4 +328,19 @@ describe('resolveScheduleDate error handling', () => {
       fs.rmSync(temp.dir, { recursive: true, force: true });
     }
   });
+
+  it('scheduleDate: 0 is passed through (explicit check, not truthy)', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { scheduleDate: 0 });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
+  });
+
+  it('scheduleDate: null is treated as absent', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { scheduleDate: null });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
+  });
+
+  it('scheduleDate: undefined is treated as absent', async () => {
+    await tc.sendTextMessage('@chat', 'hello', { scheduleDate: undefined });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
+  });
 });
