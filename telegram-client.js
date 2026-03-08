@@ -154,7 +154,7 @@ function applyParseMode(text, parseMode) {
 }
 
 function resolveScheduleDate(options) {
-  if (options.scheduleDate) return options.scheduleDate;
+  if (options.scheduleDate !== undefined && options.scheduleDate !== null) return options.scheduleDate;
   if (options.schedule) {
     const date = new Date(options.schedule);
     if (Number.isNaN(date.getTime())) {

@@ -455,7 +455,7 @@ const messagesSendSchema = {
     .describe("Disable link preview in the message"),
   silent: z.boolean().optional().describe("Send without notification sound"),
   noForwards: z.boolean().optional().describe("Protect message from forwarding/saving"),
-  schedule: z.string().optional().describe("ISO 8601 datetime for scheduled delivery"),
+  schedule: z.string().datetime({ offset: true }).optional().describe("ISO 8601 datetime for scheduled delivery"),
 };
 
 const messagesSendFileSchema = {
@@ -482,7 +482,7 @@ const messagesSendFileSchema = {
   noForwards: z.boolean().optional().describe("Protect message from forwarding/saving"),
   captionAbove: z.boolean().optional().describe("Show caption above media"),
   spoiler: z.boolean().optional().describe("Blur media until tapped"),
-  schedule: z.string().optional().describe("ISO 8601 datetime for scheduled delivery"),
+  schedule: z.string().datetime({ offset: true }).optional().describe("ISO 8601 datetime for scheduled delivery"),
   forceDocument: z.boolean().optional().describe("Send as uncompressed document"),
 };
 
