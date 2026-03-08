@@ -153,6 +153,18 @@ function applyParseMode(text, parseMode) {
   return text;
 }
 
+function resolveScheduleDate(options) {
+  if (options.scheduleDate !== undefined && options.scheduleDate !== null) return options.scheduleDate;
+  if (options.schedule) {
+    const date = new Date(options.schedule);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid schedule date: must be a valid ISO 8601 datetime');
+    }
+    return Math.floor(date.getTime() / 1000);
+  }
+  return undefined;
+}
+
 function coerceApiId(value) {
   if (typeof value === 'number') {
     return value;
@@ -896,6 +908,10 @@ class TelegramClient {
     const params = {};
     if (replyTo) params.replyTo = replyTo;
     if (options.noPreview) params.noWebpage = true;
+    if (options.silent) params.silent = true;
+    if (options.noForwards || options.noforwards) params.noforwards = true;
+    const scheduleDate = resolveScheduleDate(options);
+    if (scheduleDate) params.scheduleDate = scheduleDate;
     const peerRef = normalizeChannelId(channelId);
     const finalParams = Object.keys(params).length ? params : undefined;
     const sent = await this.client.sendText(peerRef, inputText, finalParams);
@@ -923,16 +939,28 @@ class TelegramClient {
     const fileName = typeof options.filename === 'string' && options.filename.trim()
       ? options.filename.trim()
       : undefined;
+    if (options.captionAbove && !caption) {
+      throw new Error('--caption-above requires --caption for send file');
+    }
     const replyTo = Number.isFinite(options.replyToMessageId)
       ? options.replyToMessageId
       : (Number.isFinite(options.topicId) ? options.topicId : undefined);
-    const params = replyTo ? { replyTo } : undefined;
-    const media = InputMedia.auto(uploadPath, {
+    const params = {};
+    if (replyTo) params.replyTo = replyTo;
+    if (options.silent) params.silent = true;
+    if (options.noForwards || options.noforwards) params.noforwards = true;
+    const scheduleDate = resolveScheduleDate(options);
+    if (scheduleDate) params.scheduleDate = scheduleDate;
+    if (options.captionAbove) params.invertMedia = true;
+    const mediaOptions = {
       caption: parsedCaption,
       fileName,
-    });
+    };
+    if (options.spoiler) mediaOptions.spoiler = true;
+    if (options.forceDocument) mediaOptions.forceDocument = true;
+    const media = InputMedia.auto(uploadPath, mediaOptions);
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendMedia(peerRef, media, params);
+    const sent = await this.client.sendMedia(peerRef, media, Object.keys(params).length ? params : undefined);
     return { messageId: sent.id };
   }
 

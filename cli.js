@@ -227,6 +227,9 @@ function buildProgram() {
     .option('--topic <id>', 'Forum topic id')
     .option('--reply-to <id>', 'Reply to message id')
     .option('--no-preview', 'Disable link preview')
+    .option('--silent', 'Send without notification sound')
+    .option('--no-forwards', 'Protect message from forwarding')
+    .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
   send
     .command('file')
@@ -238,6 +241,12 @@ function buildProgram() {
     .option('--filename <name>', 'Override filename')
     .option('--topic <id>', 'Forum topic id')
     .option('--reply-to <id>', 'Reply to message id')
+    .option('--silent', 'Send without notification sound')
+    .option('--no-forwards', 'Protect message from forwarding')
+    .option('--caption-above', 'Show caption above media')
+    .option('--spoiler', 'Blur media until tapped')
+    .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
+    .option('--force-document', 'Send as uncompressed document')
     .action(withGlobalOptions((globalFlags, options) => runSendFile(globalFlags, options)));
 
   const media = program.command('media').description('Download media');
@@ -971,6 +980,25 @@ async function ensureStoreConfig(storeDir) {
   }
   saveConfig(storeDir, normalized);
   return normalized;
+}
+
+function parseScheduleDate(value) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (isNaN(date.getTime())) {
+    throw new Error('--schedule must be a valid ISO 8601 datetime');
+  }
+  const now = Date.now();
+  if (date.getTime() < now) {
+    throw new Error('--schedule must be in the future');
+  }
+  const maxFuture = now + 365 * 24 * 60 * 60 * 1000;
+  if (date.getTime() > maxFuture) {
+    throw new Error('--schedule must be within 365 days from now');
+  }
+  return Math.floor(date.getTime() / 1000);
 }
 
 function parsePositiveInt(value, label) {
@@ -2703,11 +2731,15 @@ async function runSendText(globalFlags, options = {}) {
       }
       const topicId = parsePositiveInt(options.topic, '--topic');
       const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
+      const scheduleDate = parseScheduleDate(options.schedule);
       const result = await telegramClient.sendTextMessage(options.to, options.message, {
         topicId,
         replyToMessageId,
         parseMode,
         noPreview: options.noPreview,
+        silent: options.silent || false,
+        noforwards: options.forwards === false,
+        scheduleDate,
       });
       const payload = { channelId: options.to, ...result };
 
@@ -2746,12 +2778,19 @@ async function runSendFile(globalFlags, options = {}) {
       }
       const topicId = parsePositiveInt(options.topic, '--topic');
       const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
+      const scheduleDate = parseScheduleDate(options.schedule);
       const result = await telegramClient.sendFileMessage(options.to, options.file, {
         caption: options.caption,
         filename: options.filename,
         topicId,
         replyToMessageId,
         parseMode,
+        silent: options.silent || false,
+        noforwards: options.forwards === false,
+        captionAbove: options.captionAbove || false,
+        spoiler: options.spoiler || false,
+        scheduleDate,
+        forceDocument: options.forceDocument || false,
       });
       const payload = { channelId: options.to, ...result };
 

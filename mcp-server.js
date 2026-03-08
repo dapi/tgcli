@@ -453,6 +453,9 @@ const messagesSendSchema = {
     .boolean({ invalid_type_error: "noPreview must be a boolean" })
     .optional()
     .describe("Disable link preview in the message"),
+  silent: z.boolean().optional().describe("Send without notification sound"),
+  noForwards: z.boolean().optional().describe("Protect message from forwarding/saving"),
+  schedule: z.string().datetime({ offset: true }).optional().describe("ISO 8601 datetime for scheduled delivery"),
 };
 
 const messagesSendFileSchema = {
@@ -475,6 +478,12 @@ const messagesSendFileSchema = {
     .positive()
     .optional()
     .describe("Optional message ID to reply to"),
+  silent: z.boolean().optional().describe("Send without notification sound"),
+  noForwards: z.boolean().optional().describe("Protect message from forwarding/saving"),
+  captionAbove: z.boolean().optional().describe("Show caption above media"),
+  spoiler: z.boolean().optional().describe("Blur media until tapped"),
+  schedule: z.string().datetime({ offset: true }).optional().describe("ISO 8601 datetime for scheduled delivery"),
+  forceDocument: z.boolean().optional().describe("Send as uncompressed document"),
 };
 
 const mediaDownloadSchema = {
@@ -1331,12 +1340,15 @@ function createServerInstance() {
     "messagesSend",
     "Sends a text message to a channel or chat.",
     messagesSendSchema,
-    async ({ channelId, text, topicId, replyToMessageId, noPreview }) => {
+    async ({ channelId, text, topicId, replyToMessageId, noPreview, silent, noForwards, schedule }) => {
       await telegramClient.ensureLogin();
       const result = await telegramClient.sendTextMessage(channelId, text, {
         topicId,
         replyToMessageId,
         noPreview,
+        silent,
+        noForwards,
+        schedule,
       });
 
       return {
@@ -1354,13 +1366,19 @@ function createServerInstance() {
     "messagesSendFile",
     "Sends a file with an optional caption.",
     messagesSendFileSchema,
-    async ({ channelId, filePath, caption, filename, topicId, replyToMessageId }) => {
+    async ({ channelId, filePath, caption, filename, topicId, replyToMessageId, silent, noForwards, captionAbove, spoiler, schedule, forceDocument }) => {
       await telegramClient.ensureLogin();
       const result = await telegramClient.sendFileMessage(channelId, filePath, {
         caption,
         filename,
         topicId,
         replyToMessageId,
+        silent,
+        noForwards,
+        captionAbove,
+        spoiler,
+        schedule,
+        forceDocument,
       });
 
       return {
