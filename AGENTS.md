@@ -15,6 +15,11 @@
 - `npm run build`: Currently a no-op placeholder—extend it only if a transpile/bundle step is introduced.
 - `npm test`: Placeholder that echoes a notice; replace with real checks once tests exist.
 
+## SKILL.md Maintenance
+- **ALWAYS** update `SKILL.md` when changing the CLI interface: adding/removing/renaming flags, commands, or options.
+- Keep the "Core Command Patterns" section in `SKILL.md` in sync with actual CLI capabilities.
+- Add usage examples for new flags in the relevant command section.
+
 ## Coding Style & Naming Conventions
 - Use ES modules with semicolons, two-space indentation, and `camelCase` identifiers.
 - Keep tool names descriptive and aligned with Telegram operations (`listChannels`, `searchChannels`, etc.).
