@@ -109,6 +109,7 @@ tgcli send text --to <id|@username> --topic <topicId> --message "**Hello**" --pa
 tgcli send text --to <id|@username> --message "Done" --reply-to <messageId> --json --timeout 30s
 tgcli send text --to <id|@username> --message "https://example.com check this" --no-preview --json --timeout 30s
 tgcli send text --to <id|@username> --message "Nightly report" --silent --json --timeout 30s
+tgcli send text --to <id|@username> --message "Confidential" --no-forwards --json --timeout 30s
 tgcli send text --to <id|@username> --message "Good morning!" --schedule "2025-01-15T09:00:00+03:00" --json --timeout 30s
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
