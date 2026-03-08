@@ -56,6 +56,15 @@ tgcli auth
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send file`, `--parse-mode` requires `--caption`
   - `--reply-to <messageId>` replies to a specific message; if both `--reply-to` and `--topic` are passed, `--reply-to` wins
+- Telegram markdown formatting (when `--parse-mode markdown`):
+  - Bold: `**text**`
+  - Italic: `__text__` (double underscores, NOT single `_`)
+  - Bold+Italic: `**__text__**` (bold wraps italic)
+  - Single `_text_` does NOT work for italic — renders as literal underscores
+  - Single `*text*` does NOT work for bold — renders as literal asterisks
+  - Monospace inline: `` `text` ``
+  - Code block: triple backticks
+  - Telegram markdown differs from standard Markdown — always use double markers
 - Never delete lock files (`LOCK`, `database is locked`): wait and retry.
 
 ## Core Command Patterns
