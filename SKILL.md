@@ -52,6 +52,10 @@ tgcli auth
 - Always add `--json` for agent workflows.
 - Add `--timeout 30s` by default; use `--timeout 90s` for heavy archive fallback reads.
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
+- Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
+- Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
+- To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
+- If command shape is uncertain, verify it first with `tgcli <command> --help` instead of guessing flags.
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send file`, `--parse-mode` requires `--caption`
@@ -84,6 +88,8 @@ tgcli messages list --chat <id|@username> --topic <topicId> --after 2025-01-01T0
 tgcli messages show --chat <id|@username> --id <msgId> --source archive --json --timeout 30s
 tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 --source archive --json --timeout 30s
 ```
+
+Never use `--since` here; the correct flag is `--after`.
 
 ### Search
 
@@ -221,6 +227,8 @@ tgcli sync jobs retry --channel <id|@username> --json --timeout 30s
 tgcli sync jobs cancel --job-id <id> --json --timeout 30s
 tgcli sync jobs cancel --channel <id|@username> --json --timeout 30s
 ```
+
+Do not write `tgcli sync --chat ...`; queue work with `sync jobs add --chat ...`, then process it with `tgcli sync --once` or `tgcli sync --follow`.
 
 ### Service (Background Sync Daemon)
 
