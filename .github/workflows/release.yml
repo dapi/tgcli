@@ -43,7 +43,7 @@ jobs:
       - name: Download npm tarball
         if: env.HOMEBREW_TAP_TOKEN != ''
         run: |
-          TARBALL_URL="https://registry.npmjs.org/@kfastov/tgcli/-/tgcli-${VERSION}.tgz"
+          TARBALL_URL="https://registry.npmjs.org/@dapi/tgcli/-/tgcli-${VERSION}.tgz"
           curl -fsSL "$TARBALL_URL" -o tgcli.tgz
           echo "TARBALL_URL=$TARBALL_URL" >> "$GITHUB_ENV"
           echo "SHA256=$(sha256sum tgcli.tgz | awk '{print $1}')" >> "$GITHUB_ENV"
