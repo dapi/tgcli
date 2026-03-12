@@ -4154,12 +4154,29 @@ function isCliEntrypoint(argvPath = process.argv[1]) {
   }
 }
 
+function resolveEntrypointPath(filePath) {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function shouldRunMain(entryPath = process.argv[1]) {
+  const resolvedEntryPath = resolveEntrypointPath(entryPath);
+  return resolvedEntryPath !== null && resolvedEntryPath === CLI_PATH;
+}
+
 export {
   buildProgram,
   isCliEntrypoint,
   main,
   parseNonNegativeInt,
   runAuthLogin,
+  shouldRunMain,
 };
 
 if (isCliEntrypoint()) {
