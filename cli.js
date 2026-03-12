@@ -1105,8 +1105,8 @@ function parseNonNegativeInt(value, label) {
     return null;
   }
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${label} must be a non-negative number`);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
   }
   return parsed;
 }
@@ -4157,6 +4157,8 @@ function isCliEntrypoint(argvPath = process.argv[1]) {
 export {
   buildProgram,
   isCliEntrypoint,
+  main,
+  parseNonNegativeInt,
   runAuthLogin,
 };
 

@@ -245,6 +245,13 @@ function delay(ms) {
   });
 }
 
+function getRemainingTimeoutMs(deadlineAt, now) {
+  if (deadlineAt === null) {
+    return null;
+  }
+  return deadlineAt - now();
+}
+
 export async function executeSendWithRetries(sendFn, options = {}) {
   const retries = Number.isInteger(options.retries) && options.retries >= 0 ? options.retries : 0;
   const method = options.method ?? 'sendMedia';
@@ -255,9 +262,16 @@ export async function executeSendWithRetries(sendFn, options = {}) {
     ? now() + options.timeoutMs
     : null;
 
-  let attempt = 0;
-  while (attempt <= retries) {
-    attempt += 1;
+  for (let attempt = 1; attempt <= retries + 1; attempt += 1) {
+    const remainingBeforeAttemptMs = getRemainingTimeoutMs(deadlineAt, now);
+    if (remainingBeforeAttemptMs !== null && remainingBeforeAttemptMs <= 0) {
+      throw new SendCommandError(createTimeoutDetails({
+        method,
+        attempt: Math.max(1, attempt - 1),
+        retries,
+      }));
+    }
+
     try {
       const result = await sendFn({ attempt });
       return { result, attempts: attempt };
@@ -274,12 +288,15 @@ export async function executeSendWithRetries(sendFn, options = {}) {
 
       const retryDelayMs = getRetryDelayMs(backoff, attempt);
       if (deadlineAt !== null) {
-        const remainingMs = deadlineAt - now();
+        const remainingMs = getRemainingTimeoutMs(deadlineAt, now);
         if (remainingMs <= 0) {
           throw new SendCommandError(createTimeoutDetails({ method, attempt, retries }));
         }
         if (retryDelayMs > 0) {
           await sleep(Math.min(retryDelayMs, remainingMs));
+          if (getRemainingTimeoutMs(deadlineAt, now) <= 0) {
+            throw new SendCommandError(createTimeoutDetails({ method, attempt, retries }));
+          }
         }
       } else if (retryDelayMs > 0) {
         await sleep(retryDelayMs);
@@ -287,7 +304,7 @@ export async function executeSendWithRetries(sendFn, options = {}) {
     }
   }
 
-  throw new SendCommandError(createTimeoutDetails({ method, attempt, retries }));
+  throw new SendCommandError(createTimeoutDetails({ method, attempt: retries + 1, retries }));
 }
 
 export function buildSendSuccessPayload({ method, chatId, messageId, media, attempts }) {

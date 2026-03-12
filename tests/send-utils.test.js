@@ -97,6 +97,37 @@ describe('executeSendWithRetries', () => {
       attempts: 2,
     });
   });
+
+  it('stops retrying when the timeout budget is exhausted during backoff', async () => {
+    let currentTime = 0;
+    const now = vi.fn(() => currentTime);
+    const sleep = vi.fn(async (ms) => {
+      currentTime += ms;
+    });
+    const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 2,
+        retryBackoff: parseRetryBackoff('100'),
+        timeoutMs: 100,
+        sleep,
+        now,
+      }),
+    ).rejects.toMatchObject({
+      name: 'SendCommandError',
+      details: expect.objectContaining({
+        type: 'timeout',
+        method: 'sendPhoto',
+        attempt: 1,
+        retries: 2,
+      }),
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(100);
+  });
 });
 
 describe('send payload builders', () => {
