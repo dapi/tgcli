@@ -10,7 +10,7 @@ import { Command } from 'commander';
 
 import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
-import { createServices } from './core/services.js';
+import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
@@ -926,6 +926,16 @@ function runWithTimeout(task, timeoutMs, onTimeout) {
   });
 }
 
+function formatErrorMessage(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return String(error);
+}
+
 function readVersion() {
   try {
     const pkgPath = new URL('./package.json', import.meta.url);
@@ -1247,32 +1257,49 @@ async function runAuthStatus(globalFlags) {
       }
       return;
     }
-    const { telegramClient, messageSyncService } = createServices({ storeDir, config });
+    const { telegramClient } = createTelegramClient({ storeDir, config });
+    let messageSyncService = null;
+    let search = { enabled: null };
+    let archiveError = null;
     try {
+      try {
+        ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
+        search = messageSyncService.getSearchStatus();
+      } catch (error) {
+        archiveError = formatErrorMessage(error);
+      }
       const me = await telegramClient.getCurrentUser();
       const authenticated = Boolean(me);
-      const search = messageSyncService.getSearchStatus();
       const username = me?.username ? `@${me.username}` : null;
       const payload = {
         authenticated,
         configured: true,
         phoneNumber: config.phoneNumber || null,
         username: me?.username ?? null,
-        ftsEnabled: search.enabled,
+        ftsEnabled: archiveError ? null : search.enabled,
+        archiveReady: !archiveError,
+        archiveError,
       };
       if (globalFlags.json) {
         writeJson(payload);
       } else {
         if (!authenticated) {
           console.log('Not authenticated. Run `tgcli auth`.');
-        } else if (username) {
+        } else if (username && config.phoneNumber) {
           console.log(`Authenticated as ${config.phoneNumber} (${username}).`);
+        } else if (username) {
+          console.log(`Authenticated as ${username}.`);
         } else {
-          console.log(`Authenticated as ${config.phoneNumber}.`);
+          console.log(config.phoneNumber ? `Authenticated as ${config.phoneNumber}.` : 'Authenticated.');
+        }
+        if (archiveError) {
+          console.log(`Archive unavailable: ${archiveError}`);
         }
       }
     } finally {
-      await messageSyncService.shutdown();
+      if (messageSyncService) {
+        await messageSyncService.shutdown();
+      }
       await telegramClient.destroy();
     }
   }, timeoutMs);
@@ -1280,6 +1307,20 @@ async function runAuthStatus(globalFlags) {
 
 async function runAuthLogout(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
+  let release = null;
+  let telegramClient = null;
+  const cleanup = async () => {
+    if (telegramClient) {
+      const currentClient = telegramClient;
+      telegramClient = null;
+      await currentClient.destroy();
+    }
+    if (release) {
+      const currentRelease = release;
+      release = null;
+      currentRelease();
+    }
+  };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
     const { missing } = getStoreConfig(storeDir);
@@ -1291,11 +1332,14 @@ async function runAuthLogout(globalFlags) {
       }
       return;
     }
-    const release = acquireStoreLock(storeDir);
     const config = await ensureStoreConfig(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir, config });
+    release = acquireStoreLock(storeDir);
+    ({ telegramClient } = createTelegramClient({ storeDir, config }));
     try {
-      await telegramClient.login();
+      const loginSuccess = await telegramClient.login();
+      if (!loginSuccess) {
+        throw new Error('Failed to login to Telegram.');
+      }
       await telegramClient.client.logout();
       if (globalFlags.json) {
         writeJson({ loggedOut: true });
@@ -1303,56 +1347,92 @@ async function runAuthLogout(globalFlags) {
         console.log('Logged out.');
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      await cleanup();
     }
-  }, timeoutMs);
+  }, timeoutMs, cleanup);
 }
 
 async function runAuthLogin(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
+  let release = null;
+  let telegramClient = null;
+  let messageSyncService = null;
+  const cleanup = async () => {
+    if (messageSyncService) {
+      const currentService = messageSyncService;
+      messageSyncService = null;
+      await currentService.shutdown();
+    }
+    if (telegramClient) {
+      const currentClient = telegramClient;
+      telegramClient = null;
+      await currentClient.destroy();
+    }
+    if (release) {
+      const currentRelease = release;
+      release = null;
+      currentRelease();
+    }
+  };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
     const config = await ensureStoreConfig(storeDir);
-    const { telegramClient, messageSyncService } = createServices({
+    release = acquireStoreLock(storeDir);
+    ({ telegramClient } = createTelegramClient({
       storeDir,
       config,
       forceSms: options.forceSms,
       useQr: options.qr,
-    });
+    }));
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
         throw new Error('Failed to login to Telegram.');
       }
-      const dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+      let dialogCount = null;
+      let archiveError = null;
+      try {
+        ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
+        dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+      } catch (error) {
+        archiveError = formatErrorMessage(error);
+        if (options.follow) {
+          throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
+        }
+      }
       if (options.follow) {
         await telegramClient.startUpdates();
         messageSyncService.startRealtimeSync();
         messageSyncService.resumePendingJobs();
         await withShutdown(async () => {
-          await messageSyncService.shutdown();
-          await telegramClient.destroy();
-          release();
+          await cleanup();
         });
         return;
       }
 
       if (globalFlags.json) {
-        writeJson({ authenticated: true, dialogs: dialogCount });
+        writeJson({
+          authenticated: true,
+          dialogs: dialogCount,
+          archiveReady: !archiveError,
+          archiveError,
+        });
       } else {
-        console.log(`Authenticated. Seeded ${dialogCount} dialogs.`);
+        const baseMessage = dialogCount === null
+          ? 'Authenticated.'
+          : `Authenticated. Seeded ${dialogCount} dialogs.`;
+        if (archiveError) {
+          console.log(`${baseMessage} Archive unavailable: ${archiveError}`);
+        } else {
+          console.log(baseMessage);
+        }
       }
     } finally {
       if (!options.follow) {
-        await messageSyncService.shutdown();
-        await telegramClient.destroy();
-        release();
+        await cleanup();
       }
     }
-  }, timeoutMs);
+  }, timeoutMs, cleanup);
 }
 
 async function runConfigList(globalFlags) {
