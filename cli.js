@@ -936,6 +936,34 @@ function formatErrorMessage(error) {
   return String(error);
 }
 
+function parseRequiredWaitSeconds(error) {
+  const text = formatErrorMessage(error);
+  const waitMatch = /wait of (\d+) seconds is required/i.exec(text);
+  if (waitMatch) {
+    return Number(waitMatch[1]);
+  }
+  const floodWaitMatch = /FLOOD_WAIT_(\d+)/i.exec(text);
+  if (floodWaitMatch) {
+    return Number(floodWaitMatch[1]);
+  }
+  return null;
+}
+
+async function refreshDialogsWithRetry(messageSyncService, options = {}) {
+  const maxWaitSeconds = options.maxWaitSeconds ?? 30;
+  try {
+    return await messageSyncService.refreshChannelsFromDialogs();
+  } catch (error) {
+    const waitSeconds = parseRequiredWaitSeconds(error);
+    if (!waitSeconds || waitSeconds > maxWaitSeconds) {
+      throw error;
+    }
+    console.log(`Rate limited while seeding dialogs. Waiting ${waitSeconds}s and retrying once...`);
+    await delay(waitSeconds * 1000);
+    return await messageSyncService.refreshChannelsFromDialogs();
+  }
+}
+
 function readVersion() {
   try {
     const pkgPath = new URL('./package.json', import.meta.url);
@@ -1397,7 +1425,7 @@ async function runAuthLogin(globalFlags, options = {}) {
       } else {
         try {
           ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
-          dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+          dialogCount = await refreshDialogsWithRetry(messageSyncService);
         } catch (error) {
           archiveError = formatErrorMessage(error);
           if (options.follow) {
