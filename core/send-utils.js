@@ -84,6 +84,13 @@ function looksLikeRetryableNetworkError(message, code) {
     || lowered.includes('network');
 }
 
+function looksLikeTransportError(message, error) {
+  if (error?.name === 'TransportError') {
+    return true;
+  }
+  return message.toLowerCase().includes('transport error');
+}
+
 function looksLikeTelegramError(message, code, error) {
   if (typeof code === 'number') {
     return true;
@@ -174,6 +181,18 @@ export function classifySendError(error, { method, attempt = 1, retries = 0 } = 
   }
 
   if (looksLikeRetryableNetworkError(message, code)) {
+    return {
+      type: 'network',
+      method,
+      message,
+      code,
+      attempt,
+      retries,
+      retryable: true,
+    };
+  }
+
+  if (looksLikeTransportError(message, error)) {
     return {
       type: 'network',
       method,

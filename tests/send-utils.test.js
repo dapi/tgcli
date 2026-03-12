@@ -76,6 +76,27 @@ describe('executeSendWithRetries', () => {
 
     expect(sendFn).toHaveBeenCalledTimes(1);
   });
+
+  it('retries mtcute transport errors even when they use numeric codes', async () => {
+    const sendFn = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('Transport error: 404'), { name: 'TransportError', code: 404 }))
+      .mockResolvedValueOnce({ messageId: 789, media: { type: 'photo' } });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await executeSendWithRetries(sendFn, {
+      method: 'sendPhoto',
+      retries: 2,
+      retryBackoff: parseRetryBackoff('10'),
+      sleep,
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(10);
+    expect(result).toEqual({
+      result: { messageId: 789, media: { type: 'photo' } },
+      attempts: 2,
+    });
+  });
 });
 
 describe('send payload builders', () => {

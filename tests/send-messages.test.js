@@ -419,6 +419,23 @@ describe('sendPhotoMessage', () => {
     });
   });
 
+  it('does not fail the send when best-effort metadata lookup errors', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 505, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 505 } },
+      ],
+    });
+    tc.client.getMessages.mockRejectedValueOnce(Object.assign(new Error('temporary lookup failure'), { code: 'ECONNRESET' }));
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toEqual({
+      messageId: 505,
+      method: 'sendPhoto',
+      media: { type: 'photo' },
+    });
+  });
+
   it('reuses the same prepared request and randomId across photo send retries', async () => {
     const prepared = await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
     tc.client.call
