@@ -1,30 +1,15 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published npm version to propagate to Homebrew (for example 2.3.1 or v2.3.1)
+        required: true
+        type: string
 
 jobs:
-  publish-npm:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - run: npm ci
-      - run: npm test
-      - name: Verify tag matches package version
-        run: node -e "const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));const tag=(process.env.GITHUB_REF_NAME||'').replace(/^v/,'');if(!tag){throw new Error('Missing release tag');}if(pkg.version!==tag){throw new Error(`Tag ${tag} does not match package.json ${pkg.version}`);}"
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
   update-brew:
-    needs: publish-npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,8 +22,8 @@ jobs:
       - name: Resolve version
         if: env.HOMEBREW_TAP_TOKEN != ''
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Download npm tarball
         if: env.HOMEBREW_TAP_TOKEN != ''
