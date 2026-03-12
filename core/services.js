@@ -50,7 +50,11 @@ export function createTelegramClient(options = {}) {
     config.apiHash,
     config.phoneNumber,
     sessionPath,
-    { forceSms: options.forceSms ?? false, useQr: options.useQr ?? false },
+    {
+      forceSms: options.forceSms ?? false,
+      useQr: options.useQr ?? false,
+      disableUpdates: options.disableUpdates ?? false,
+    },
   );
 
   return {

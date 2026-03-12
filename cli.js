@@ -936,6 +936,34 @@ function formatErrorMessage(error) {
   return String(error);
 }
 
+function parseRequiredWaitSeconds(error) {
+  const text = formatErrorMessage(error);
+  const waitMatch = /wait of (\d+) seconds is required/i.exec(text);
+  if (waitMatch) {
+    return Number(waitMatch[1]);
+  }
+  const floodWaitMatch = /FLOOD_WAIT_(\d+)/i.exec(text);
+  if (floodWaitMatch) {
+    return Number(floodWaitMatch[1]);
+  }
+  return null;
+}
+
+async function refreshDialogsWithRetry(messageSyncService, options = {}) {
+  const maxWaitSeconds = options.maxWaitSeconds ?? 30;
+  try {
+    return await messageSyncService.refreshChannelsFromDialogs();
+  } catch (error) {
+    const waitSeconds = parseRequiredWaitSeconds(error);
+    if (!waitSeconds || waitSeconds > maxWaitSeconds) {
+      throw error;
+    }
+    console.log(`Rate limited while seeding dialogs. Waiting ${waitSeconds}s and retrying once...`);
+    await delay(waitSeconds * 1000);
+    return await messageSyncService.refreshChannelsFromDialogs();
+  }
+}
+
 function readVersion() {
   try {
     const pkgPath = new URL('./package.json', import.meta.url);
@@ -1257,7 +1285,7 @@ async function runAuthStatus(globalFlags) {
       }
       return;
     }
-    const { telegramClient } = createTelegramClient({ storeDir, config });
+    const { telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true });
     let messageSyncService = null;
     let search = { enabled: null };
     let archiveError = null;
@@ -1334,7 +1362,7 @@ async function runAuthLogout(globalFlags) {
     }
     const config = await ensureStoreConfig(storeDir);
     release = acquireStoreLock(storeDir);
-    ({ telegramClient } = createTelegramClient({ storeDir, config }));
+    ({ telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true }));
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
@@ -1383,6 +1411,7 @@ async function runAuthLogin(globalFlags, options = {}) {
       config,
       forceSms: options.forceSms,
       useQr: options.qr,
+      disableUpdates: !options.follow,
     }));
     try {
       const loginSuccess = await telegramClient.login();
@@ -1391,13 +1420,17 @@ async function runAuthLogin(globalFlags, options = {}) {
       }
       let dialogCount = null;
       let archiveError = null;
-      try {
-        ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
-        dialogCount = await messageSyncService.refreshChannelsFromDialogs();
-      } catch (error) {
-        archiveError = formatErrorMessage(error);
-        if (options.follow) {
-          throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
+      if (timeoutMs && !options.follow) {
+        archiveError = 'Skipped dialog bootstrap because auth is running with a wall-clock timeout. Re-run without --timeout to seed dialogs.';
+      } else {
+        try {
+          ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
+          dialogCount = await refreshDialogsWithRetry(messageSyncService);
+        } catch (error) {
+          archiveError = formatErrorMessage(error);
+          if (options.follow) {
+            throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
+          }
         }
       }
       if (options.follow) {
