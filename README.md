@@ -51,6 +51,14 @@ Then authenticate:
 tgcli auth
 ```
 
+`tgcli auth` only establishes or refreshes the Telegram session. Archive seeding and realtime sync are separate:
+
+```bash
+tgcli sync --once
+# or
+tgcli sync --follow
+```
+
 If confirmation codes in-app do not arrive, you can use QR login:
 
 ```bash

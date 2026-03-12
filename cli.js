@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { spawn, spawnSync } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import readline from 'readline';
 import { Command } from 'commander';
 
@@ -17,6 +17,7 @@ const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
 const LAUNCHD_LABEL = 'com.dapi.tgcli';
 const SYSTEMD_SERVICE_NAME = 'tgcli';
+const AUTH_SYNC_HINT = 'Run `tgcli sync --once` or `tgcli sync --follow` when you need archive data.';
 const CONFIG_SPECS = [
   { key: 'apiId', path: ['apiId'], type: 'number' },
   { key: 'apiHash', path: ['apiHash'], type: 'string', secret: true },
@@ -1418,22 +1419,15 @@ async function runAuthLogin(globalFlags, options = {}) {
       if (!loginSuccess) {
         throw new Error('Failed to login to Telegram.');
       }
-      let dialogCount = null;
-      let archiveError = null;
-      if (timeoutMs && !options.follow) {
-        archiveError = 'Skipped dialog bootstrap because auth is running with a wall-clock timeout. Re-run without --timeout to seed dialogs.';
-      } else {
+      if (options.follow) {
+        let archiveError = null;
         try {
           ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
-          dialogCount = await refreshDialogsWithRetry(messageSyncService);
+          await refreshDialogsWithRetry(messageSyncService);
         } catch (error) {
           archiveError = formatErrorMessage(error);
-          if (options.follow) {
-            throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
-          }
+          throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
         }
-      }
-      if (options.follow) {
         await telegramClient.startUpdates();
         messageSyncService.startRealtimeSync();
         messageSyncService.resumePendingJobs();
@@ -1446,19 +1440,12 @@ async function runAuthLogin(globalFlags, options = {}) {
       if (globalFlags.json) {
         writeJson({
           authenticated: true,
-          dialogs: dialogCount,
-          archiveReady: !archiveError,
-          archiveError,
+          dialogs: null,
+          archiveReady: false,
+          archiveError: null,
         });
       } else {
-        const baseMessage = dialogCount === null
-          ? 'Authenticated.'
-          : `Authenticated. Seeded ${dialogCount} dialogs.`;
-        if (archiveError) {
-          console.log(`${baseMessage} Archive unavailable: ${archiveError}`);
-        } else {
-          console.log(baseMessage);
-        }
+        console.log(`Authenticated. ${AUTH_SYNC_HINT}`);
       }
     } finally {
       if (!options.follow) {
@@ -3978,4 +3965,23 @@ async function main() {
   await CLI_PROGRAM.parseAsync(process.argv);
 }
 
-await main();
+function isCliEntrypoint(argvPath = process.argv[1]) {
+  if (!argvPath) {
+    return false;
+  }
+  try {
+    return pathToFileURL(fs.realpathSync(argvPath)).href === import.meta.url;
+  } catch {
+    return pathToFileURL(path.resolve(argvPath)).href === import.meta.url;
+  }
+}
+
+export {
+  buildProgram,
+  isCliEntrypoint,
+  runAuthLogin,
+};
+
+if (isCliEntrypoint()) {
+  await main();
+}

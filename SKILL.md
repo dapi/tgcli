@@ -49,6 +49,7 @@ tgcli auth
 ## Execution Rules
 
 - If `tgcli` is not found, install it: `npm install -g @dapi/tgcli` then run `tgcli auth` for first-time login.
+- `tgcli auth` only authenticates the Telegram session. Use `tgcli sync --once` or `tgcli sync --follow` to seed/archive dialogs.
 - Always add `--json` for agent workflows.
 - Add `--timeout 30s` by default; use `--timeout 90s` for heavy archive fallback reads.
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
@@ -243,6 +244,7 @@ tgcli service logs --json --timeout 30s
 ### Config & Auth
 
 ```bash
+tgcli auth --json --timeout 30s
 tgcli auth --qr --json --timeout 30s
 tgcli auth status --json --timeout 30s
 tgcli auth logout --json --timeout 30s
