@@ -1127,17 +1127,13 @@ class TelegramClient {
     }
 
     const media = InputMedia.photo(uploadPath, mediaOptions);
-    const peerRef = normalizeChannelId(channelId);
-    const peer = await this.client.resolvePeer(peerRef);
-    const normalizedMedia = await this.client._normalizeInputMedia(media, { uploadPeer: peer });
     const { message, entities } = splitInputText(parsedCaption);
     return {
       method: 'sendPhoto',
-      peerRef,
+      peerRef: normalizeChannelId(channelId),
+      media,
       request: {
         _: 'messages.sendMedia',
-        peer,
-        media: normalizedMedia,
         silent: options.silent ? true : undefined,
         replyTo: buildLowLevelReplyTo(options),
         randomId: options.randomId ?? randomLong(),
@@ -1151,7 +1147,14 @@ class TelegramClient {
   }
 
   async sendPreparedPhotoMessage(prepared) {
-    const result = await this.client.call(prepared.request);
+    const peer = await this.client.resolvePeer(prepared.peerRef);
+    const normalizedMedia = await this.client._normalizeInputMedia(prepared.media, { uploadPeer: peer });
+    const request = {
+      ...prepared.request,
+      peer,
+      media: normalizedMedia,
+    };
+    const result = await this.client.call(request);
     const messageId = extractMessageIdFromSendUpdates(result, prepared.request.randomId);
     if (!messageId) {
       throw new Error('Failed to resolve sent photo message id from Telegram updates.');

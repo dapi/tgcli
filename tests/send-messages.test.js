@@ -440,8 +440,16 @@ describe('sendPhotoMessage', () => {
 
     const [firstRequest] = tc.client.call.mock.calls[0];
     const [secondRequest] = tc.client.call.mock.calls[1];
-    expect(secondRequest).toBe(firstRequest);
+    expect(firstRequest).not.toBe(secondRequest);
+    expect(String(firstRequest.randomId)).toBe(String(prepared.request.randomId));
     expect(String(secondRequest.randomId)).toBe(String(prepared.request.randomId));
+    expect(tc.client._normalizeInputMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not upload during preparePhotoMessage, so upload failures can be retried later', async () => {
+    await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
+    expect(tc.client.resolvePeer).not.toHaveBeenCalled();
+    expect(tc.client._normalizeInputMedia).not.toHaveBeenCalled();
   });
 });
 
