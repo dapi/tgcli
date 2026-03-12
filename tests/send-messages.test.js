@@ -37,6 +37,7 @@ function createMockClient() {
         { _: 'updateNewChannelMessage', message: { id: 202 } },
       ],
     }),
+    handleClientUpdate: vi.fn(),
     getMessages: vi.fn().mockResolvedValue([{ id: 202, media: { type: 'photo', fileId: 'photo-file-id' } }]),
   };
   return tc;
@@ -410,11 +411,44 @@ describe('sendPhotoMessage', () => {
 
     const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
     expect(result).toMatchObject({
+      chatId: '999',
       messageId: 303,
       method: 'sendPhoto',
       media: {
         type: 'photo',
         fileId: 'photo-file-id',
+      },
+    });
+    expect(tc.client.handleClientUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updates: expect.any(Array),
+      }),
+      true,
+    );
+  });
+
+  it('supports Saved Messages self targets without requiring a numeric peer id', async () => {
+    tc.client.resolvePeer.mockResolvedValueOnce({ _: 'inputPeerSelf' });
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 606, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 606 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 606, media: { type: 'photo', fileId: 'saved-photo-id' } }]);
+
+    const result = await tc.sendPhotoMessage('me', png.filePath, {});
+
+    expect(tc.client._normalizeInputMedia).toHaveBeenCalledWith(expect.anything(), {
+      uploadPeer: { _: 'inputPeerSelf' },
+    });
+    expect(result).toMatchObject({
+      chatId: 'me',
+      messageId: 606,
+      method: 'sendPhoto',
+      media: {
+        type: 'photo',
+        fileId: 'saved-photo-id',
       },
     });
   });
@@ -430,6 +464,7 @@ describe('sendPhotoMessage', () => {
 
     const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
     expect(result).toEqual({
+      chatId: '999',
       messageId: 505,
       method: 'sendPhoto',
       media: { type: 'photo' },

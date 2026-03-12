@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { parseNonNegativeInt, shouldRunMain } from '../cli.js';
+import { buildSendPhotoSuccessPayload, parseNonNegativeInt, shouldRunMain } from '../cli.js';
 
 describe('tgcli send photo CLI validation', () => {
   const tempDirs = [];
@@ -30,5 +30,28 @@ describe('tgcli send photo CLI validation', () => {
 
     expect(shouldRunMain(symlinkPath)).toBe(true);
     expect(shouldRunMain(path.join(tempDir, 'not-cli'))).toBe(false);
+  });
+
+  it('uses the resolved peer id for photo JSON chat_id output', () => {
+    expect(buildSendPhotoSuccessPayload({
+      method: 'sendPhoto',
+      inputChatId: '@some-alias',
+      result: {
+        chatId: '999',
+        messageId: 123,
+        media: { type: 'photo', fileId: 'photo-file-id' },
+      },
+      attempts: 2,
+    })).toEqual({
+      ok: true,
+      method: 'sendPhoto',
+      chat_id: '999',
+      message_id: 123,
+      media: {
+        type: 'photo',
+        file_id: 'photo-file-id',
+      },
+      attempts: 2,
+    });
   });
 });

@@ -1148,6 +1148,9 @@ class TelegramClient {
 
   async sendPreparedPhotoMessage(prepared) {
     const peer = await this.client.resolvePeer(prepared.peerRef);
+    const chatId = peer?._ === 'inputPeerSelf'
+      ? String(prepared.peerRef)
+      : this._extractPeerId(peer);
     const normalizedMedia = await this.client._normalizeInputMedia(prepared.media, { uploadPeer: peer });
     const request = {
       ...prepared.request,
@@ -1155,6 +1158,7 @@ class TelegramClient {
       media: normalizedMedia,
     };
     const result = await this.client.call(request);
+    this.client.handleClientUpdate(result, true);
     const messageId = extractMessageIdFromSendUpdates(result, prepared.request.randomId);
     if (!messageId) {
       throw new Error('Failed to resolve sent photo message id from Telegram updates.');
@@ -1162,12 +1166,16 @@ class TelegramClient {
     try {
       const [sent] = await this.client.getMessages(prepared.peerRef, Number(messageId));
       if (sent) {
-        return buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' });
+        return {
+          chatId,
+          ...buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' }),
+        };
       }
     } catch (error) {
       // file_id enrichment is best-effort and must not flip a successful send into failure
     }
     return {
+      chatId,
       messageId: Number(messageId),
       method: 'sendPhoto',
       media: { type: 'photo' },

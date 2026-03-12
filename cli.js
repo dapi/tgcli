@@ -2969,15 +2969,7 @@ async function runSendPhoto(globalFlags, options = {}) {
         );
 
         if (globalFlags.json) {
-          writeJson(
-            buildSendSuccessPayload({
-              method,
-              chatId: options.to,
-              messageId: result.messageId,
-              media: result.media ?? { type: 'photo' },
-              attempts,
-            }),
-          );
+          writeJson(buildSendPhotoSuccessPayload({ method, inputChatId: options.to, result, attempts }));
         } else {
           console.log(`Photo sent (${result.messageId}).`);
         }
@@ -2990,6 +2982,16 @@ async function runSendPhoto(globalFlags, options = {}) {
   } catch (error) {
     throw normalizeSendCommandError(error, { method, retries });
   }
+}
+
+function buildSendPhotoSuccessPayload({ method, inputChatId, result, attempts }) {
+  return buildSendSuccessPayload({
+    method,
+    chatId: result?.chatId ?? inputChatId,
+    messageId: result?.messageId,
+    media: result?.media ?? { type: 'photo' },
+    attempts,
+  });
 }
 
 async function runSendFile(globalFlags, options = {}) {
@@ -4172,6 +4174,7 @@ function shouldRunMain(entryPath = process.argv[1]) {
 
 export {
   buildProgram,
+  buildSendPhotoSuccessPayload,
   isCliEntrypoint,
   main,
   parseNonNegativeInt,
