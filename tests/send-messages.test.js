@@ -4,6 +4,7 @@ vi.mock('@mtcute/node', () => ({
 vi.mock('@mtcute/core', () => ({
   InputMedia: {
     auto: vi.fn((path, opts) => ({ path, ...opts })),
+    photo: vi.fn((path, opts) => ({ path, ...opts })),
   },
 }));
 vi.mock('@mtcute/markdown-parser', () => ({
@@ -32,9 +33,9 @@ function createMockClient() {
   return tc;
 }
 
-function createTempFile() {
+function createTempFile(extension = '.txt') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-send-test-'));
-  const filePath = path.join(dir, 'sample.txt');
+  const filePath = path.join(dir, `sample${extension}`);
   fs.writeFileSync(filePath, 'sample file');
   return { dir, filePath };
 }
@@ -302,6 +303,102 @@ describe('sendFileMessage new send parameters', () => {
   it('no new params still sends undefined params (backward compat)', async () => {
     await tc.sendFileMessage('@chat', temp.filePath, {});
     expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), undefined);
+  });
+});
+
+describe('sendPhotoMessage', () => {
+  let tc;
+  let png;
+  let jpg;
+
+  beforeEach(() => {
+    tc = createMockClient();
+    png = createTempFile('.png');
+    jpg = createTempFile('.jpg');
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    fs.rmSync(png.dir, { recursive: true, force: true });
+    fs.rmSync(jpg.dir, { recursive: true, force: true });
+  });
+
+  it('sends local png via InputMedia.photo', async () => {
+    await tc.sendPhotoMessage('@chat', png.filePath, {});
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(expect.stringContaining('file:'), {});
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), undefined);
+  });
+
+  it('sends local jpg via InputMedia.photo', async () => {
+    await tc.sendPhotoMessage('@chat', jpg.filePath, {});
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(expect.stringContaining('file:'), {});
+  });
+
+  it('applies markdown parse mode to photo caption', async () => {
+    await tc.sendPhotoMessage('@chat', png.filePath, {
+      caption: '**caption**',
+      parseMode: 'markdown',
+    });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(md).toHaveBeenCalledWith('**caption**');
+    expect(InputMedia.photo).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({
+        caption: { text: '**caption**', entities: [{ type: 'bold' }] },
+      }),
+    );
+  });
+
+  it('passes reply-to, topic fallback, silent, no-forwards, caption-above, spoiler, and schedule to sendMedia', async () => {
+    const scheduleDate = Math.floor(Date.now() / 1000) + 1800;
+    await tc.sendPhotoMessage('@chat', png.filePath, {
+      caption: 'preview',
+      topicId: 42,
+      replyToMessageId: 77,
+      silent: true,
+      noForwards: true,
+      captionAbove: true,
+      spoiler: true,
+      scheduleDate,
+    });
+
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ spoiler: true }),
+    );
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), {
+      replyTo: 77,
+      silent: true,
+      noforwards: true,
+      scheduleDate,
+      invertMedia: true,
+    });
+  });
+
+  it('rejects caption-above without caption for send photo', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', png.filePath, { captionAbove: true }),
+    ).rejects.toThrow('--caption-above requires --caption for send photo');
+  });
+
+  it('returns best-effort media metadata for successful photo sends', async () => {
+    tc.client.sendMedia.mockResolvedValueOnce({
+      id: 303,
+      media: { type: 'photo', fileId: 'photo-file-id' },
+    });
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toMatchObject({
+      messageId: 303,
+      method: 'sendPhoto',
+      media: {
+        type: 'photo',
+        fileId: 'photo-file-id',
+      },
+    });
   });
 });
 

@@ -165,6 +165,62 @@ function resolveScheduleDate(options) {
   return undefined;
 }
 
+function resolveReplyTo(options = {}) {
+  if (Number.isFinite(options.replyToMessageId)) {
+    return options.replyToMessageId;
+  }
+  if (Number.isFinite(options.topicId)) {
+    return options.topicId;
+  }
+  return undefined;
+}
+
+function buildSendParams(options = {}) {
+  const params = {};
+  const replyTo = resolveReplyTo(options);
+  if (replyTo) params.replyTo = replyTo;
+  if (options.noPreview) params.noWebpage = true;
+  if (options.silent) params.silent = true;
+  if (options.noForwards || options.noforwards) params.noforwards = true;
+  const scheduleDate = resolveScheduleDate(options);
+  if (scheduleDate) params.scheduleDate = scheduleDate;
+  if (options.captionAbove) params.invertMedia = true;
+  return Object.keys(params).length ? params : undefined;
+}
+
+function resolveUploadPath(filePath) {
+  if (!filePath || typeof filePath !== 'string') {
+    throw new Error('filePath must be a string.');
+  }
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`File not found: ${resolved}`);
+  }
+  return `file:${resolved}`;
+}
+
+function resolveOptionalCaption(caption) {
+  if (typeof caption !== 'string') {
+    return undefined;
+  }
+  const trimmed = caption.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function buildSendMessageResult(sent, { method, defaultMediaType } = {}) {
+  const result = {
+    messageId: sent?.id ?? null,
+  };
+  if (method) {
+    result.method = method;
+  }
+  const media = summarizeMedia(sent?.media) ?? (defaultMediaType ? { type: defaultMediaType } : null);
+  if (media) {
+    result.media = media;
+  }
+  return result;
+}
+
 function coerceApiId(value) {
   if (typeof value === 'number') {
     return value;
@@ -941,35 +997,16 @@ class TelegramClient {
     }
     const parseMode = normalizeParseMode(options.parseMode);
     const inputText = applyParseMode(messageText, parseMode);
-    const replyTo = Number.isFinite(options.replyToMessageId)
-      ? options.replyToMessageId
-      : (Number.isFinite(options.topicId) ? options.topicId : undefined);
-    const params = {};
-    if (replyTo) params.replyTo = replyTo;
-    if (options.noPreview) params.noWebpage = true;
-    if (options.silent) params.silent = true;
-    if (options.noForwards || options.noforwards) params.noforwards = true;
-    const scheduleDate = resolveScheduleDate(options);
-    if (scheduleDate) params.scheduleDate = scheduleDate;
+    const params = buildSendParams(options);
     const peerRef = normalizeChannelId(channelId);
-    const finalParams = Object.keys(params).length ? params : undefined;
-    const sent = await this.client.sendText(peerRef, inputText, finalParams);
+    const sent = await this.client.sendText(peerRef, inputText, params);
     return { messageId: sent.id };
   }
 
   async sendFileMessage(channelId, filePath, options = {}) {
     await this.ensureLogin();
-    if (!filePath || typeof filePath !== 'string') {
-      throw new Error('filePath must be a string.');
-    }
-    const resolved = path.resolve(filePath);
-    if (!fs.existsSync(resolved)) {
-      throw new Error(`File not found: ${resolved}`);
-    }
-    const uploadPath = `file:${resolved}`;
-    const caption = typeof options.caption === 'string' && options.caption.trim()
-      ? options.caption
-      : undefined;
+    const uploadPath = resolveUploadPath(filePath);
+    const caption = resolveOptionalCaption(options.caption);
     const parseMode = normalizeParseMode(options.parseMode);
     if (parseMode && !caption) {
       throw new Error('--parse-mode requires --caption for send file');
@@ -981,16 +1018,6 @@ class TelegramClient {
     if (options.captionAbove && !caption) {
       throw new Error('--caption-above requires --caption for send file');
     }
-    const replyTo = Number.isFinite(options.replyToMessageId)
-      ? options.replyToMessageId
-      : (Number.isFinite(options.topicId) ? options.topicId : undefined);
-    const params = {};
-    if (replyTo) params.replyTo = replyTo;
-    if (options.silent) params.silent = true;
-    if (options.noForwards || options.noforwards) params.noforwards = true;
-    const scheduleDate = resolveScheduleDate(options);
-    if (scheduleDate) params.scheduleDate = scheduleDate;
-    if (options.captionAbove) params.invertMedia = true;
     const mediaOptions = {
       caption: parsedCaption,
       fileName,
@@ -999,8 +1026,34 @@ class TelegramClient {
     if (options.forceDocument) mediaOptions.forceDocument = true;
     const media = InputMedia.auto(uploadPath, mediaOptions);
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendMedia(peerRef, media, Object.keys(params).length ? params : undefined);
-    return { messageId: sent.id };
+    const sent = await this.client.sendMedia(peerRef, media, buildSendParams(options));
+    return buildSendMessageResult(sent, { method: 'sendDocument', defaultMediaType: 'document' });
+  }
+
+  async sendPhotoMessage(channelId, filePath, options = {}) {
+    await this.ensureLogin();
+    const uploadPath = resolveUploadPath(filePath);
+    const caption = resolveOptionalCaption(options.caption);
+    const parseMode = normalizeParseMode(options.parseMode);
+    if (parseMode && !caption) {
+      throw new Error('--parse-mode requires --caption for send photo');
+    }
+    if (options.captionAbove && !caption) {
+      throw new Error('--caption-above requires --caption for send photo');
+    }
+
+    const mediaOptions = {};
+    if (caption) {
+      mediaOptions.caption = applyParseMode(caption, parseMode);
+    }
+    if (options.spoiler) {
+      mediaOptions.spoiler = true;
+    }
+
+    const media = InputMedia.photo(uploadPath, mediaOptions);
+    const peerRef = normalizeChannelId(channelId);
+    const sent = await this.client.sendMedia(peerRef, media, buildSendParams(options));
+    return buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' });
   }
 
   async downloadMessageMedia(channelId, messageId, options = {}) {
