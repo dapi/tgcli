@@ -1257,7 +1257,7 @@ async function runAuthStatus(globalFlags) {
       }
       return;
     }
-    const { telegramClient } = createTelegramClient({ storeDir, config });
+    const { telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true });
     let messageSyncService = null;
     let search = { enabled: null };
     let archiveError = null;
@@ -1334,7 +1334,7 @@ async function runAuthLogout(globalFlags) {
     }
     const config = await ensureStoreConfig(storeDir);
     release = acquireStoreLock(storeDir);
-    ({ telegramClient } = createTelegramClient({ storeDir, config }));
+    ({ telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true }));
     try {
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
@@ -1383,6 +1383,7 @@ async function runAuthLogin(globalFlags, options = {}) {
       config,
       forceSms: options.forceSms,
       useQr: options.qr,
+      disableUpdates: !options.follow,
     }));
     try {
       const loginSuccess = await telegramClient.login();
@@ -1391,13 +1392,17 @@ async function runAuthLogin(globalFlags, options = {}) {
       }
       let dialogCount = null;
       let archiveError = null;
-      try {
-        ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
-        dialogCount = await messageSyncService.refreshChannelsFromDialogs();
-      } catch (error) {
-        archiveError = formatErrorMessage(error);
-        if (options.follow) {
-          throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
+      if (timeoutMs && !options.follow) {
+        archiveError = 'Skipped dialog bootstrap because auth is running with a wall-clock timeout. Re-run without --timeout to seed dialogs.';
+      } else {
+        try {
+          ({ messageSyncService } = createMessageSyncService(telegramClient, { storeDir }));
+          dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+        } catch (error) {
+          archiveError = formatErrorMessage(error);
+          if (options.follow) {
+            throw new Error(`Authenticated, but archive sync could not start: ${archiveError}`);
+          }
         }
       }
       if (options.follow) {

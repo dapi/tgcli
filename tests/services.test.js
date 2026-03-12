@@ -49,6 +49,7 @@ describe('core services helpers', () => {
       storeDir,
       forceSms: true,
       useQr: true,
+      disableUpdates: true,
     });
 
     expect(telegramClientCtor).toHaveBeenCalledWith(
@@ -56,7 +57,7 @@ describe('core services helpers', () => {
       'hash-value',
       '+1234567890',
       path.join(storeDir, 'session.json'),
-      { forceSms: true, useQr: true },
+      { forceSms: true, useQr: true, disableUpdates: true },
     );
     expect(messageSyncServiceCtor).not.toHaveBeenCalled();
     expect(result.sessionPath).toBe(path.join(storeDir, 'session.json'));
