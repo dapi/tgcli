@@ -2955,8 +2955,9 @@ async function runSendPhoto(globalFlags, options = {}) {
           spoiler: options.spoiler || false,
           scheduleDate,
         };
+        const prepared = await telegramClient.preparePhotoMessage(options.to, options.photo, sendOptions);
         const { result, attempts } = await executeSendWithRetries(
-          () => telegramClient.sendPhotoMessage(options.to, options.photo, sendOptions),
+          () => telegramClient.sendPreparedPhotoMessage(prepared),
           {
             method,
             retries,

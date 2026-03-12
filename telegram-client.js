@@ -1,5 +1,6 @@
 import { TelegramClient as MtCuteClient } from '@mtcute/node';
 import { InputMedia } from '@mtcute/core';
+import { randomLong } from '@mtcute/core/utils.js';
 import { html } from '@mtcute/html-parser';
 import { md } from '@mtcute/markdown-parser';
 import EventEmitter from 'events';
@@ -175,16 +176,27 @@ function resolveReplyTo(options = {}) {
   return undefined;
 }
 
-function buildSendParams(options = {}) {
+function buildTextSendParams(options = {}) {
   const params = {};
   const replyTo = resolveReplyTo(options);
   if (replyTo) params.replyTo = replyTo;
-  if (options.noPreview) params.noWebpage = true;
+  if (options.noPreview) params.disableWebPreview = true;
   if (options.silent) params.silent = true;
-  if (options.noForwards || options.noforwards) params.noforwards = true;
+  if (options.noForwards || options.noforwards) params.forbidForwards = true;
   const scheduleDate = resolveScheduleDate(options);
   if (scheduleDate) params.scheduleDate = scheduleDate;
-  if (options.captionAbove) params.invertMedia = true;
+  return Object.keys(params).length ? params : undefined;
+}
+
+function buildMediaSendParams(options = {}) {
+  const params = {};
+  const replyTo = resolveReplyTo(options);
+  if (replyTo) params.replyTo = replyTo;
+  if (options.silent) params.silent = true;
+  if (options.noForwards || options.noforwards) params.forbidForwards = true;
+  const scheduleDate = resolveScheduleDate(options);
+  if (scheduleDate) params.scheduleDate = scheduleDate;
+  if (options.captionAbove) params.invert = true;
   return Object.keys(params).length ? params : undefined;
 }
 
@@ -219,6 +231,68 @@ function buildSendMessageResult(sent, { method, defaultMediaType } = {}) {
     result.media = media;
   }
   return result;
+}
+
+function buildLowLevelReplyTo(options = {}) {
+  const replyTo = resolveReplyTo(options);
+  if (!replyTo) {
+    return undefined;
+  }
+  return {
+    _: 'inputReplyToMessage',
+    replyToMsgId: replyTo,
+  };
+}
+
+function splitInputText(value) {
+  if (!value) {
+    return { message: '', entities: undefined };
+  }
+  if (typeof value === 'string') {
+    return { message: value, entities: undefined };
+  }
+  if (typeof value === 'object' && typeof value.text === 'string') {
+    return {
+      message: value.text,
+      entities: Array.isArray(value.entities) && value.entities.length > 0 ? value.entities : undefined,
+    };
+  }
+  return { message: String(value), entities: undefined };
+}
+
+function randomIdsEqual(left, right) {
+  if (left?.eq && typeof left.eq === 'function') {
+    return left.eq(right);
+  }
+  return String(left) === String(right);
+}
+
+function extractMessageIdFromSendUpdates(response, randomId) {
+  const updates = Array.isArray(response?.updates) ? response.updates : [];
+  let messageId = null;
+  for (const update of updates) {
+    if (update?._ === 'updateMessageID' && randomIdsEqual(update.randomId, randomId)) {
+      messageId = update.id;
+      break;
+    }
+  }
+  if (messageId !== null) {
+    return messageId;
+  }
+
+  for (const update of updates) {
+    if (
+      update?._ === 'updateNewMessage'
+      || update?._ === 'updateNewChannelMessage'
+      || update?._ === 'updateNewScheduledMessage'
+      || update?._ === 'updateQuickReplyMessage'
+      || update?._ === 'updateBotNewBusinessMessage'
+    ) {
+      return update.message?.id ?? null;
+    }
+  }
+
+  return null;
 }
 
 function coerceApiId(value) {
@@ -997,7 +1071,7 @@ class TelegramClient {
     }
     const parseMode = normalizeParseMode(options.parseMode);
     const inputText = applyParseMode(messageText, parseMode);
-    const params = buildSendParams(options);
+    const params = buildTextSendParams(options);
     const peerRef = normalizeChannelId(channelId);
     const sent = await this.client.sendText(peerRef, inputText, params);
     return { messageId: sent.id };
@@ -1026,11 +1100,11 @@ class TelegramClient {
     if (options.forceDocument) mediaOptions.forceDocument = true;
     const media = InputMedia.auto(uploadPath, mediaOptions);
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendMedia(peerRef, media, buildSendParams(options));
+    const sent = await this.client.sendMedia(peerRef, media, buildMediaSendParams(options));
     return buildSendMessageResult(sent, { method: 'sendDocument', defaultMediaType: 'document' });
   }
 
-  async sendPhotoMessage(channelId, filePath, options = {}) {
+  async preparePhotoMessage(channelId, filePath, options = {}) {
     await this.ensureLogin();
     const uploadPath = resolveUploadPath(filePath);
     const caption = resolveOptionalCaption(options.caption);
@@ -1043,8 +1117,10 @@ class TelegramClient {
     }
 
     const mediaOptions = {};
+    let parsedCaption;
     if (caption) {
-      mediaOptions.caption = applyParseMode(caption, parseMode);
+      parsedCaption = applyParseMode(caption, parseMode);
+      mediaOptions.caption = parsedCaption;
     }
     if (options.spoiler) {
       mediaOptions.spoiler = true;
@@ -1052,8 +1128,48 @@ class TelegramClient {
 
     const media = InputMedia.photo(uploadPath, mediaOptions);
     const peerRef = normalizeChannelId(channelId);
-    const sent = await this.client.sendMedia(peerRef, media, buildSendParams(options));
+    const peer = await this.client.resolvePeer(peerRef);
+    const normalizedMedia = await this.client._normalizeInputMedia(media, { uploadPeer: peer });
+    const { message, entities } = splitInputText(parsedCaption);
+    return {
+      method: 'sendPhoto',
+      peerRef,
+      request: {
+        _: 'messages.sendMedia',
+        peer,
+        media: normalizedMedia,
+        silent: options.silent ? true : undefined,
+        replyTo: buildLowLevelReplyTo(options),
+        randomId: options.randomId ?? randomLong(),
+        scheduleDate: resolveScheduleDate(options),
+        message,
+        entities,
+        noforwards: options.noForwards || options.noforwards ? true : undefined,
+        invertMedia: options.captionAbove ? true : undefined,
+      },
+    };
+  }
+
+  async sendPreparedPhotoMessage(prepared) {
+    const result = await this.client.call(prepared.request);
+    const messageId = extractMessageIdFromSendUpdates(result, prepared.request.randomId);
+    if (!messageId) {
+      throw new Error('Failed to resolve sent photo message id from Telegram updates.');
+    }
+    const [sent] = await this.client.getMessages(prepared.peerRef, Number(messageId));
+    if (!sent) {
+      return {
+        messageId: Number(messageId),
+        method: 'sendPhoto',
+        media: { type: 'photo' },
+      };
+    }
     return buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' });
+  }
+
+  async sendPhotoMessage(channelId, filePath, options = {}) {
+    const prepared = await this.preparePhotoMessage(channelId, filePath, options);
+    return this.sendPreparedPhotoMessage(prepared);
   }
 
   async downloadMessageMedia(channelId, messageId, options = {}) {
