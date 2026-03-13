@@ -165,7 +165,6 @@ describe('executeSendWithRetries', () => {
 
   it('throws timeout before first attempt when budget already expired', async () => {
     let currentTime = 100;
-    const now = vi.fn(() => currentTime);
     const sendFn = vi.fn();
     const sleep = vi.fn();
 
