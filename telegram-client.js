@@ -1514,6 +1514,27 @@ class TelegramClient {
     return String(id);
   }
 
+  _normalizePeer(peer) {
+    if (peer == null) throw new Error(`Peer is ${peer}, cannot normalize`);
+    if (typeof peer !== 'object') throw new Error(`Peer must be an object, got ${typeof peer}`);
+
+    let type, id;
+    if (peer.userId != null) {
+      type = 'user';
+      id = Number(peer.userId);
+    } else if (peer.channelId != null) {
+      type = 'channel';
+      id = Number(peer.channelId);
+    } else if (peer.chatId != null) {
+      type = 'chat';
+      id = Number(peer.chatId);
+    } else {
+      throw new Error(`Peer object has no recognizable ID field: ${JSON.stringify(peer)}`);
+    }
+
+    return { type, id };
+  }
+
   async joinChatlist(link) {
     await this.ensureLogin();
     if (!/^https?:\/\/t\.me\/addlist\/[a-zA-Z0-9_-]+\/?(\?[^\s]*)?$/.test(link)) {

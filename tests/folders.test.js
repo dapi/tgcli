@@ -569,6 +569,44 @@ describe('_extractPeerId', () => {
   });
 });
 
+describe('_normalizePeer', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('normalizes channel peer', () => {
+    expect(tc._normalizePeer({ _: 'inputPeerChannel', channelId: 1951583351 }))
+      .toEqual({ type: 'channel', id: 1951583351 });
+  });
+
+  it('normalizes user peer', () => {
+    expect(tc._normalizePeer({ _: 'inputPeerUser', userId: 272066824 }))
+      .toEqual({ type: 'user', id: 272066824 });
+  });
+
+  it('normalizes chat peer', () => {
+    expect(tc._normalizePeer({ _: 'inputPeerChat', chatId: 555 }))
+      .toEqual({ type: 'chat', id: 555 });
+  });
+
+  it('infers type from field when _ is missing', () => {
+    expect(tc._normalizePeer({ channelId: 123 })).toEqual({ type: 'channel', id: 123 });
+    expect(tc._normalizePeer({ userId: 456 })).toEqual({ type: 'user', id: 456 });
+    expect(tc._normalizePeer({ chatId: 789 })).toEqual({ type: 'chat', id: 789 });
+  });
+
+  it('converts BigInt id to Number', () => {
+    expect(tc._normalizePeer({ channelId: BigInt(123) })).toEqual({ type: 'channel', id: 123 });
+  });
+
+  it('throws for null peer', () => {
+    expect(() => tc._normalizePeer(null)).toThrow();
+  });
+
+  it('throws for peer without recognizable fields', () => {
+    expect(() => tc._normalizePeer({ foo: 'bar' })).toThrow();
+  });
+});
+
 describe('joinChatlist', () => {
   let tc;
   beforeEach(() => { tc = createMockClient(); });
