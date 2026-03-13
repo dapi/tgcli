@@ -286,6 +286,9 @@ export async function executeSendWithRetries(sendFn, options = {}) {
         try {
           options.onRetry(details);
         } catch (callbackError) {
+          if (callbackError instanceof TypeError || callbackError instanceof ReferenceError) {
+            throw callbackError;
+          }
           console.error('[executeSendWithRetries] onRetry callback error:', callbackError);
         }
       }
@@ -313,7 +316,7 @@ export async function executeSendWithRetries(sendFn, options = {}) {
   throw new SendCommandError(createTimeoutDetails({ method, attempt: retries + 1, retries }));
 }
 
-export function buildSendSuccessPayload({ method, chatId, messageId, media, attempts }) {
+export function buildSendSuccessPayload({ method, chatId, messageId, media, attempts, warning }) {
   const payload = {
     ok: true,
     method,
@@ -329,6 +332,10 @@ export function buildSendSuccessPayload({ method, chatId, messageId, media, atte
     if (Object.keys(mediaPayload).length > 0) {
       payload.media = mediaPayload;
     }
+  }
+
+  if (warning) {
+    payload.warning = warning;
   }
 
   return payload;

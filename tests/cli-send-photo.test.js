@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildSendPhotoSuccessPayload, normalizeSendCommandError, parseNonNegativeInt, shouldRunMain } from '../cli.js';
-import { SendCommandError } from '../core/send-utils.js';
+import { buildSendPhotoSuccessPayload, logSendRetry, normalizeSendCommandError, parseNonNegativeInt, shouldRunMain, writeError } from '../cli.js';
+import { SendCommandError, buildSendErrorPayload } from '../core/send-utils.js';
 
 describe('tgcli send photo CLI validation', () => {
   const tempDirs = [];
@@ -99,5 +99,74 @@ describe('normalizeSendCommandError', () => {
     const result = normalizeSendCommandError(err, { method: 'sendPhoto', retries: 2 });
     expect(result).toBeInstanceOf(SendCommandError);
     expect(result.details).toMatchObject({ type: 'network', method: 'sendPhoto' });
+  });
+});
+
+describe('writeError', () => {
+  let stderrSpy;
+
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+  });
+
+  it('writes structured JSON to stderr for SendCommandError in JSON mode', () => {
+    const details = { type: 'network', method: 'sendPhoto', message: 'ECONNRESET', code: 'ECONNRESET', attempt: 2, retries: 3 };
+    const err = new SendCommandError(details);
+    writeError(err, true);
+    const written = JSON.parse(stderrSpy.mock.calls[0][0]);
+    expect(written).toEqual(buildSendErrorPayload(details));
+  });
+
+  it('writes human-readable message to stderr for SendCommandError in text mode', () => {
+    const details = { type: 'timeout', method: 'sendPhoto', message: 'Timeout', attempt: 1, retries: 0 };
+    const err = new SendCommandError(details);
+    writeError(err, false);
+    expect(stderrSpy.mock.calls[0][0]).toContain('sendPhoto failed [timeout]');
+  });
+
+  it('writes generic JSON error for non-SendCommandError in JSON mode', () => {
+    writeError(new Error('something broke'), true);
+    const written = JSON.parse(stderrSpy.mock.calls[0][0]);
+    expect(written).toEqual({ ok: false, error: 'something broke' });
+  });
+});
+
+describe('logSendRetry', () => {
+  let stderrSpy;
+
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+  });
+
+  it('writes structured JSON event to stderr in JSON mode', () => {
+    const details = { type: 'network', method: 'sendPhoto', message: 'ECONNRESET', attempt: 1, retries: 3 };
+    logSendRetry(details, { json: true });
+    const written = JSON.parse(stderrSpy.mock.calls[0][0]);
+    expect(written).toEqual({ event: 'retry', type: 'network', method: 'sendPhoto', message: 'ECONNRESET', attempt: 1, retries: 3 });
+  });
+
+  it('writes human-readable retry message to stderr in text mode', () => {
+    const details = { type: 'network', method: 'sendPhoto', message: 'ECONNRESET', code: 'ECONNRESET', attempt: 1, retries: 3 };
+    logSendRetry(details, { json: false });
+    const output = stderrSpy.mock.calls[0][0];
+    expect(output).toContain('sendPhoto transient network error');
+    expect(output).toContain('attempt 1/4');
+    expect(output).toContain('(ECONNRESET)');
+  });
+
+  it('omits code suffix when code is absent', () => {
+    const details = { type: 'timeout', method: 'sendPhoto', message: 'timed out', attempt: 2, retries: 2 };
+    logSendRetry(details, { json: false });
+    const output = stderrSpy.mock.calls[0][0];
+    expect(output).not.toContain('(');
+    expect(output).toContain('attempt 2/3');
   });
 });

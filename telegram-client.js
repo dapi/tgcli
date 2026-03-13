@@ -1182,6 +1182,7 @@ class TelegramClient {
       messageId: Number(messageId),
       method: 'sendPhoto',
       media: { type: 'photo' },
+      warning: 'Media enrichment failed; file_id unavailable',
     };
   }
 

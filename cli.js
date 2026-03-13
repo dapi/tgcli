@@ -2995,6 +2995,7 @@ function buildSendPhotoSuccessPayload({ method, inputChatId, result, attempts })
     messageId: result?.messageId,
     media: result?.media ?? { type: 'photo' },
     attempts,
+    warning: result?.warning,
   });
 }
 
@@ -4183,11 +4184,13 @@ export {
   buildProgram,
   buildSendPhotoSuccessPayload,
   isCliEntrypoint,
+  logSendRetry,
   main,
   normalizeSendCommandError,
   parseNonNegativeInt,
   runAuthLogin,
   shouldRunMain,
+  writeError,
 };
 
 if (isCliEntrypoint()) {

@@ -468,6 +468,7 @@ describe('sendPhotoMessage', () => {
       messageId: 505,
       method: 'sendPhoto',
       media: { type: 'photo' },
+      warning: 'Media enrichment failed; file_id unavailable',
     });
   });
 

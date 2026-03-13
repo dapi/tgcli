@@ -126,7 +126,7 @@ describe('executeSendWithRetries', () => {
       .mockRejectedValueOnce(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }))
       .mockResolvedValueOnce({ messageId: 100 });
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const callbackError = new TypeError('bad callback');
+    const callbackError = new Error('bad callback');
     const onRetry = vi.fn(() => { throw callbackError; });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -140,9 +140,27 @@ describe('executeSendWithRetries', () => {
 
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('onRetry'),
-      expect.any(TypeError),
+      callbackError,
     );
     errorSpy.mockRestore();
+  });
+
+  it('re-throws TypeError from onRetry callback instead of swallowing it', async () => {
+    const sendFn = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }))
+      .mockResolvedValueOnce({ messageId: 100 });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const onRetry = vi.fn(() => { throw new TypeError('x is not a function'); });
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 2,
+        retryBackoff: parseRetryBackoff('10'),
+        sleep,
+        onRetry,
+      }),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 
   it('throws timeout before first attempt when budget already expired', async () => {
@@ -321,6 +339,28 @@ describe('send payload builders', () => {
       },
       attempts: 2,
     });
+  });
+
+  it('includes warning in success payload when provided', () => {
+    const result = buildSendSuccessPayload({
+      method: 'sendPhoto',
+      chatId: 123,
+      messageId: 456,
+      media: { type: 'photo' },
+      attempts: 1,
+      warning: 'Media enrichment failed; file_id unavailable',
+    });
+    expect(result.warning).toBe('Media enrichment failed; file_id unavailable');
+  });
+
+  it('omits warning from success payload when not provided', () => {
+    const result = buildSendSuccessPayload({
+      method: 'sendPhoto',
+      chatId: 123,
+      messageId: 456,
+      attempts: 1,
+    });
+    expect(result).not.toHaveProperty('warning');
   });
 
   it('includes media with only type when fileId is absent', () => {
