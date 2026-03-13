@@ -1163,17 +1163,18 @@ class TelegramClient {
     if (!messageId) {
       throw new Error('Failed to resolve sent photo message id from Telegram updates.');
     }
+    let sent;
     try {
-      const [sent] = await this.client.getMessages(prepared.peerRef, Number(messageId));
-      if (sent) {
-        return {
-          chatId,
-          ...buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' }),
-        };
-      }
+      [sent] = await this.client.getMessages(prepared.peerRef, Number(messageId));
     } catch (error) {
       // file_id enrichment is best-effort and must not flip a successful send into failure
       console.error(`[sendPhoto] getMessages enrichment failed for peer ${prepared.peerRef}, message ${messageId}: ${error.message}`);
+    }
+    if (sent) {
+      return {
+        chatId,
+        ...buildSendMessageResult(sent, { method: 'sendPhoto', defaultMediaType: 'photo' }),
+      };
     }
     return {
       chatId,

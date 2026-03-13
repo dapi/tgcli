@@ -997,6 +997,7 @@ function normalizeSendCommandError(error, { method, retries, attempt = 1 } = {})
 
 function logSendRetry(details, globalFlags) {
   if (globalFlags.json) {
+    process.stderr.write(`${JSON.stringify({ event: 'retry', type: details.type, method: details.method, message: details.message, attempt: details.attempt, retries: details.retries })}\n`);
     return;
   }
   const totalAttempts = (details.retries ?? 0) + 1;

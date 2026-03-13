@@ -145,6 +145,36 @@ describe('executeSendWithRetries', () => {
     errorSpy.mockRestore();
   });
 
+  it('throws timeout when budget expires before second attempt', async () => {
+    let currentTime = 0;
+    const now = vi.fn(() => currentTime);
+    const sleep = vi.fn(async (ms) => { currentTime += ms; });
+    const sendFn = vi.fn(async () => {
+      currentTime += 200;
+      throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' });
+    });
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 2,
+        retryBackoff: parseRetryBackoff('50'),
+        timeoutMs: 200,
+        sleep,
+        now,
+      }),
+    ).rejects.toMatchObject({
+      name: 'SendCommandError',
+      details: expect.objectContaining({
+        type: 'timeout',
+        attempt: 1,
+        retries: 2,
+      }),
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+  });
+
   it('fails immediately with retries: 0 and does not sleep', async () => {
     const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
     const sleep = vi.fn().mockResolvedValue(undefined);
@@ -320,6 +350,11 @@ describe('classifySendError', () => {
   it('classifies bare "timeout" message as non-retryable timeout', () => {
     const result = classifySendError(new Error('Timeout'), { method: 'sendPhoto' });
     expect(result).toMatchObject({ type: 'timeout', retryable: false });
+  });
+
+  it('classifies "timed out" message without code as retryable timeout', () => {
+    const result = classifySendError(new Error('connection timed out'), { method: 'sendPhoto' });
+    expect(result).toMatchObject({ type: 'timeout', retryable: true });
   });
 
   it('classifies ECONNRESET as retryable network error', () => {

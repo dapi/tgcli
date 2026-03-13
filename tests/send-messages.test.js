@@ -498,6 +498,35 @@ describe('sendPhotoMessage', () => {
     expect(tc.client._normalizeInputMedia).toHaveBeenCalledTimes(2);
   });
 
+  it('throws when photo filePath does not exist', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', '/tmp/nonexistent-photo-12345.png', {}),
+    ).rejects.toThrow('File not found:');
+  });
+
+  it('throws when photo filePath is empty', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', '', {}),
+    ).rejects.toThrow('filePath must be a string.');
+  });
+
+  it('extracts userId from inputPeerUser for photo send chatId', async () => {
+    tc.client.resolvePeer.mockResolvedValueOnce({ _: 'inputPeerUser', userId: 42 });
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 707, randomId: { eq: () => true } },
+        { _: 'updateNewMessage', message: { id: 707 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 707, media: { type: 'photo', fileId: 'user-photo-id' } }]);
+
+    const result = await tc.sendPhotoMessage('42', png.filePath, {});
+    expect(result).toMatchObject({
+      chatId: '42',
+      messageId: 707,
+    });
+  });
+
   it('rejects --parse-mode without --caption for preparePhotoMessage', async () => {
     await expect(
       tc.preparePhotoMessage('@chat', png.filePath, { parseMode: 'markdown' }),
