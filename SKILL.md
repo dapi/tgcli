@@ -37,8 +37,7 @@ tgcli auth
 | Use tgcli for | Use telegram-mcp for |
 |-|-|
 | Read/search/archive messages | edit/delete/forward |
-| Send text/files and topic posts | reactions |
-| | Send photo with preview (image as cover) via `send_file` |
+| Send text/photo/files and topic posts | reactions |
 | Forum topics listing/search | inline bot buttons |
 | Download media from messages | advanced interactive actions |
 | Group admin (rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
@@ -59,13 +58,15 @@ tgcli auth
 - If command shape is uncertain, verify it first with `tgcli <command> --help` instead of guessing flags.
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
-  - for `send file`, `--parse-mode` requires `--caption`
+  - for `send photo` and `send file`, `--parse-mode` requires `--caption`
   - `--reply-to <messageId>` replies to a specific message; if both `--reply-to` and `--topic` are passed, `--reply-to` wins
   - `--silent` sends without notification sound
   - `--no-forwards` protects message from forwarding/saving
   - `--schedule <iso>` schedules message for future delivery (ISO 8601, must be in the future, within 365 days)
-  - `--caption-above` shows caption above media (`send file` only, requires `--caption`)
-  - `--spoiler` blurs media until tapped (`send file` only)
+  - `--caption-above` shows caption above media (`send photo`/`send file`, requires `--caption`)
+  - `--spoiler` blurs media until tapped (`send photo`/`send file`)
+  - `--retries <n>` retries transient network/transport failures for `send photo`
+  - `--retry-backoff <ms|constant|linear|exponential>` controls retry delay for `send photo`
   - `--force-document` sends photo/video as uncompressed document (`send file` only)
   - `--retries <n>` retry on failure with exponential backoff (default 0); JSON output includes `retry_log` and `attempts` when retries occurred
 - Telegram markdown formatting (when `--parse-mode markdown`):
@@ -107,9 +108,9 @@ tgcli messages search "Release" --case-sensitive --chat <id|@username> --source 
 
 Both positional query and `--query` flag work. `--chat` accepts multiple values. Use `--regex` for pattern matching, `--tag`/`--tags` to filter by channel tags, `--after`/`--before` for date range, `--case-sensitive` to disable case-insensitive search.
 
-### Send Text/File
+### Send Text/Photo/File
 
-**⚠ `send` uses `--to` and `--message`, NOT `--chat`/`--text`.**
+**⚠ `send` uses `--to` for the destination; then `--message` for text, `--photo` for photo uploads, and `--file` for generic files.**
 
 ```bash
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
@@ -121,6 +122,13 @@ tgcli send text --to <id|@username> --message "Confidential" --no-forwards --jso
 tgcli send text --to <id|@username> --message "Good morning!" --schedule "2025-01-15T09:00:00+03:00" --json --timeout 30s
 tgcli send text --to <id|@username> --message "Hello" --retries 3 --json --timeout 30s
 
+tgcli send photo --to <id|@username> --photo /path/to/image.png --caption "Report" --json --timeout 30s
+tgcli send photo --to <id|@username> --photo /path/to/image.png --caption "**Report**" --parse-mode markdown --json --timeout 30s
+tgcli send photo --to <id|@username> --photo /path/to/image.png --reply-to <messageId> --json --timeout 30s
+tgcli send photo --to <id|@username> --photo /path/to/image.png --caption "Breaking news" --caption-above --json --timeout 30s
+tgcli send photo --to <id|@username> --photo /path/to/image.png --spoiler --json --timeout 30s
+tgcli send photo --to <id|@username> --photo /path/to/image.png --retries 3 --retry-backoff exponential --json --timeout 30s
+
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --filename custom-name.pdf --json --timeout 30s
@@ -130,22 +138,11 @@ tgcli send file --to <id|@username> --file /path/to/photo.jpg --spoiler --json -
 tgcli send file --to <id|@username> --file /path/to/photo.jpg --force-document --json --timeout 30s
 ```
 
-### Post with Cover Image (Photo + Caption)
+### Photo Preview vs Document Upload
 
-tgcli `send file` sends images as **documents** (no preview). To post an image as a photo with caption (cover-style), use **telegram-mcp** `send_file`:
-
-Workflow:
-1. Download or prepare image locally
-2. Send via telegram-mcp:
-   - `mcp__telegram-mcp__send_file(chat_id=<id>, file_path="/tmp/image.jpg", caption="Post text")`
-3. Caption limit: 1024 characters. For longer posts — send photo first, then follow up with `send text`.
-
-For draft/approval flow:
-1. Send to Saved Messages first (use own user ID, not `me`)
-2. Review in Telegram
-3. If approved — resend to target channel
-
-Note: telegram-mcp `send_file` auto-detects .jpg/.png as photos with preview. tgcli `send file` sends as auto-detected media by default; use `--force-document` to send as document attachment without preview.
+- Use `tgcli send photo` for local PNG/JPG when Telegram should render a photo preview.
+- Use `tgcli send file` for generic uploads and explicit document-style attachments.
+- For draft/approval flow, send to Saved Messages first, review in Telegram, then resend to the target chat.
 
 ### Media Download
 

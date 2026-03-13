@@ -59,17 +59,20 @@ MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP)
 
 ## send
 - send text --to <id|username> --message "..." [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--no-preview] [--silent] [--no-forwards] [--schedule <iso>]
+- send photo --to <id|username> --photo PATH [--caption] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--retries <n>] [--retry-backoff <ms|constant|linear|exponential>]
 - send file --to <id|username> --file PATH [--caption] [--filename] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--force-document]
   - `--parse-mode` is case-insensitive on input.
   - Allowed values: `markdown`, `html`, `none`.
-  - For `send file`, `--parse-mode` requires `--caption`.
+  - For `send photo` and `send file`, `--parse-mode` requires `--caption`.
   - If both `--reply-to` and `--topic` are passed, `--reply-to` takes precedence.
   - `--no-preview` disables automatic link preview (applies to `send text` only).
   - `--silent` — send without notification sound.
   - `--no-forwards` — protect message from forwarding/saving.
   - `--schedule <iso>` — schedule message for future delivery (ISO 8601). Must be in the future, within 365 days.
-  - `--caption-above` — show caption above media (requires `--caption`). `send file` only.
-  - `--spoiler` — blur media until tapped. `send file` only.
+  - `--caption-above` — show caption above media (requires `--caption`). Applies to `send photo` and `send file`.
+  - `--spoiler` — blur media until tapped. Applies to `send photo` and `send file`.
+  - `--retries <n>` — retry transient network/transport failures for `send photo` (default: `2`).
+  - `--retry-backoff` accepts either a millisecond value or `constant|linear|exponential`.
   - `--force-document` — send photo/video as uncompressed document. `send file` only.
 
 ## media

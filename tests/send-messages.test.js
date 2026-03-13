@@ -4,6 +4,7 @@ vi.mock('@mtcute/node', () => ({
 vi.mock('@mtcute/core', () => ({
   InputMedia: {
     auto: vi.fn((path, opts) => ({ path, ...opts })),
+    photo: vi.fn((path, opts) => ({ path, ...opts })),
   },
 }));
 vi.mock('@mtcute/markdown-parser', () => ({
@@ -28,13 +29,23 @@ function createMockClient() {
   tc.client = {
     sendText: vi.fn().mockResolvedValue({ id: 101 }),
     sendMedia: vi.fn().mockResolvedValue({ id: 202 }),
+    resolvePeer: vi.fn().mockResolvedValue({ _: 'inputPeerChannel', channelId: 999 }),
+    _normalizeInputMedia: vi.fn(async (media) => ({ _: 'inputMediaUploadedPhoto', media })),
+    call: vi.fn().mockResolvedValue({
+      updates: [
+        { _: 'updateMessageID', id: 202, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 202 } },
+      ],
+    }),
+    handleClientUpdate: vi.fn(),
+    getMessages: vi.fn().mockResolvedValue([{ id: 202, media: { type: 'photo', fileId: 'photo-file-id' } }]),
   };
   return tc;
 }
 
-function createTempFile() {
+function createTempFile(extension = '.txt') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-send-test-'));
-  const filePath = path.join(dir, 'sample.txt');
+  const filePath = path.join(dir, `sample${extension}`);
   fs.writeFileSync(filePath, 'sample file');
   return { dir, filePath };
 }
@@ -161,7 +172,7 @@ describe('sendTextMessage new send parameters', () => {
 
   it('--no-forwards passes noforwards: true in params', async () => {
     await tc.sendTextMessage('@chat', 'hello', { noforwards: true });
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { noforwards: true });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { forbidForwards: true });
   });
 
   it('--schedule passes scheduleDate as unix timestamp in params', async () => {
@@ -190,14 +201,14 @@ describe('sendTextMessage new send parameters', () => {
     });
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', {
       silent: true,
-      noforwards: true,
+      forbidForwards: true,
       scheduleDate,
     });
   });
 
   it('noForwards (camelCase) passes noforwards: true in params', async () => {
     await tc.sendTextMessage('@chat', 'hello', { noForwards: true });
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { noforwards: true });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { forbidForwards: true });
   });
 
   it('schedule (ISO string) passes scheduleDate as unix timestamp', async () => {
@@ -233,7 +244,7 @@ describe('sendFileMessage new send parameters', () => {
 
   it('--no-forwards passes noforwards: true in params', async () => {
     await tc.sendFileMessage('@chat', temp.filePath, { noforwards: true });
-    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { noforwards: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { forbidForwards: true });
   });
 
   it('--schedule passes scheduleDate in params', async () => {
@@ -247,7 +258,7 @@ describe('sendFileMessage new send parameters', () => {
       caption: 'my caption',
       captionAbove: true,
     });
-    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { invertMedia: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { invert: true });
   });
 
   it('--caption-above without caption throws error', async () => {
@@ -276,7 +287,7 @@ describe('sendFileMessage new send parameters', () => {
 
   it('noForwards (camelCase) passes noforwards: true in params', async () => {
     await tc.sendFileMessage('@chat', temp.filePath, { noForwards: true });
-    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { noforwards: true });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { forbidForwards: true });
   });
 
   it('schedule (ISO string) passes scheduleDate as unix timestamp', async () => {
@@ -294,7 +305,7 @@ describe('sendFileMessage new send parameters', () => {
     });
     expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), {
       silent: true,
-      noforwards: true,
+      forbidForwards: true,
       replyTo: 99,
     });
   });
@@ -302,6 +313,253 @@ describe('sendFileMessage new send parameters', () => {
   it('no new params still sends undefined params (backward compat)', async () => {
     await tc.sendFileMessage('@chat', temp.filePath, {});
     expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), undefined);
+  });
+});
+
+describe('sendPhotoMessage', () => {
+  let tc;
+  let png;
+  let jpg;
+
+  beforeEach(() => {
+    tc = createMockClient();
+    png = createTempFile('.png');
+    jpg = createTempFile('.jpg');
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    fs.rmSync(png.dir, { recursive: true, force: true });
+    fs.rmSync(jpg.dir, { recursive: true, force: true });
+  });
+
+  it('sends local png via InputMedia.photo', async () => {
+    await tc.sendPhotoMessage('@chat', png.filePath, {});
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(expect.stringContaining('file:'), {});
+    expect(tc.client.resolvePeer).toHaveBeenCalledWith('@chat');
+    expect(tc.client._normalizeInputMedia).toHaveBeenCalledTimes(1);
+    expect(tc.client.call).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends local jpg via InputMedia.photo', async () => {
+    await tc.sendPhotoMessage('@chat', jpg.filePath, {});
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(expect.stringContaining('file:'), {});
+  });
+
+  it('applies markdown parse mode to photo caption', async () => {
+    await tc.sendPhotoMessage('@chat', png.filePath, {
+      caption: '**caption**',
+      parseMode: 'markdown',
+    });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(md).toHaveBeenCalledWith('**caption**');
+    expect(InputMedia.photo).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({
+        caption: { text: '**caption**', entities: [{ type: 'bold' }] },
+      }),
+    );
+  });
+
+  it('passes reply-to, topic fallback, silent, no-forwards, caption-above, spoiler, and schedule to low-level sendMedia request', async () => {
+    const scheduleDate = Math.floor(Date.now() / 1000) + 1800;
+    await tc.sendPhotoMessage('@chat', png.filePath, {
+      caption: 'preview',
+      topicId: 42,
+      replyToMessageId: 77,
+      silent: true,
+      noForwards: true,
+      captionAbove: true,
+      spoiler: true,
+      scheduleDate,
+    });
+
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.photo).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ spoiler: true }),
+    );
+    expect(tc.client.call).toHaveBeenCalledWith(expect.objectContaining({
+      _: 'messages.sendMedia',
+      silent: true,
+      scheduleDate,
+      noforwards: true,
+      invertMedia: true,
+      replyTo: {
+        _: 'inputReplyToMessage',
+        replyToMsgId: 77,
+      },
+    }));
+  });
+
+  it('rejects caption-above without caption for send photo', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', png.filePath, { captionAbove: true }),
+    ).rejects.toThrow('--caption-above requires --caption for send photo');
+  });
+
+  it('returns best-effort media metadata for successful photo sends', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 303, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 303 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 303, media: { type: 'photo', fileId: 'photo-file-id' } }]);
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toMatchObject({
+      chatId: '999',
+      messageId: 303,
+      method: 'sendPhoto',
+      media: {
+        type: 'photo',
+        fileId: 'photo-file-id',
+      },
+    });
+    expect(tc.client.handleClientUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updates: expect.any(Array),
+      }),
+      true,
+    );
+  });
+
+  it('supports Saved Messages self targets without requiring a numeric peer id', async () => {
+    tc.client.resolvePeer.mockResolvedValueOnce({ _: 'inputPeerSelf' });
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 606, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 606 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 606, media: { type: 'photo', fileId: 'saved-photo-id' } }]);
+
+    const result = await tc.sendPhotoMessage('me', png.filePath, {});
+
+    expect(tc.client._normalizeInputMedia).toHaveBeenCalledWith(expect.anything(), {
+      uploadPeer: { _: 'inputPeerSelf' },
+    });
+    expect(result).toMatchObject({
+      chatId: 'me',
+      messageId: 606,
+      method: 'sendPhoto',
+      media: {
+        type: 'photo',
+        fileId: 'saved-photo-id',
+      },
+    });
+  });
+
+  it('does not fail the send when best-effort metadata lookup errors', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 505, randomId: { eq: () => true } },
+        { _: 'updateNewChannelMessage', message: { id: 505 } },
+      ],
+    });
+    tc.client.getMessages.mockRejectedValueOnce(Object.assign(new Error('temporary lookup failure'), { code: 'ECONNRESET' }));
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toEqual({
+      chatId: '999',
+      messageId: 505,
+      method: 'sendPhoto',
+      media: { type: 'photo' },
+      warning: 'Media enrichment failed; file_id unavailable',
+    });
+  });
+
+  it('reuses the same prepared request and randomId across photo send retries', async () => {
+    const prepared = await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
+    tc.client.call
+      .mockRejectedValueOnce(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }))
+      .mockResolvedValueOnce({
+        updates: [
+          {
+            _: 'updateMessageID',
+            id: 404,
+            randomId: { eq: (value) => String(value) === String(prepared.request.randomId) },
+          },
+          { _: 'updateNewChannelMessage', message: { id: 404 } },
+        ],
+      });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 404, media: { type: 'photo' } }]);
+
+    await expect(tc.sendPreparedPhotoMessage(prepared)).rejects.toThrow('ECONNRESET');
+    await tc.sendPreparedPhotoMessage(prepared);
+
+    const [firstRequest] = tc.client.call.mock.calls[0];
+    const [secondRequest] = tc.client.call.mock.calls[1];
+    expect(firstRequest).not.toBe(secondRequest);
+    expect(String(firstRequest.randomId)).toBe(String(prepared.request.randomId));
+    expect(String(secondRequest.randomId)).toBe(String(prepared.request.randomId));
+    expect(tc.client._normalizeInputMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws when photo filePath does not exist', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', '/tmp/nonexistent-photo-12345.png', {}),
+    ).rejects.toThrow('File not found:');
+  });
+
+  it('throws when photo filePath is empty', async () => {
+    await expect(
+      tc.sendPhotoMessage('@chat', '', {}),
+    ).rejects.toThrow('filePath must be a string.');
+  });
+
+  it('extracts userId from inputPeerUser for photo send chatId', async () => {
+    tc.client.resolvePeer.mockResolvedValueOnce({ _: 'inputPeerUser', userId: 42 });
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateMessageID', id: 707, randomId: { eq: () => true } },
+        { _: 'updateNewMessage', message: { id: 707 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 707, media: { type: 'photo', fileId: 'user-photo-id' } }]);
+
+    const result = await tc.sendPhotoMessage('42', png.filePath, {});
+    expect(result).toMatchObject({
+      chatId: '42',
+      messageId: 707,
+    });
+  });
+
+  it('rejects --parse-mode without --caption for preparePhotoMessage', async () => {
+    await expect(
+      tc.preparePhotoMessage('@chat', png.filePath, { parseMode: 'markdown' }),
+    ).rejects.toThrow('--parse-mode requires --caption for send photo');
+  });
+
+  it('throws when extractMessageIdFromSendUpdates returns null (no matching update)', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [],
+    });
+
+    await expect(
+      tc.sendPhotoMessage('@chat', png.filePath, {}),
+    ).rejects.toThrow('Failed to resolve sent photo message id from Telegram updates.');
+  });
+
+  it('extracts messageId from updateNewChannelMessage when updateMessageID is absent', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateNewChannelMessage', message: { id: 808 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 808, media: { type: 'photo', fileId: 'fallback-id' } }]);
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toMatchObject({ messageId: 808 });
+  });
+
+  it('does not upload during preparePhotoMessage, so upload failures can be retried later', async () => {
+    await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
+    expect(tc.client.resolvePeer).not.toHaveBeenCalled();
+    expect(tc.client._normalizeInputMedia).not.toHaveBeenCalled();
   });
 });
 

@@ -11,6 +11,15 @@ import { Command } from 'commander';
 import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
+import {
+  buildSendErrorPayload,
+  buildSendSuccessPayload,
+  classifySendError,
+  executeSendWithRetries,
+  formatSendErrorMessage,
+  parseRetryBackoff,
+  SendCommandError,
+} from './core/send-utils.js';
 import { resolveStoreDir } from './core/store.js';
 import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
 
@@ -19,6 +28,7 @@ const SERVICE_STATE_FILE = 'service-state.json';
 const LAUNCHD_LABEL = 'com.dapi.tgcli';
 const SYSTEMD_SERVICE_NAME = 'tgcli';
 const AUTH_SYNC_HINT = 'Run `tgcli sync --once` or `tgcli sync --follow` when you need archive data.';
+const DEFAULT_SEND_PHOTO_RETRIES = 2;
 const CONFIG_SPECS = [
   { key: 'apiId', path: ['apiId'], type: 'number' },
   { key: 'apiHash', path: ['apiHash'], type: 'string', secret: true },
@@ -219,7 +229,7 @@ function buildProgram() {
     .option('--after <n>', 'Messages after')
     .action(withGlobalOptions((globalFlags, options) => runMessagesContext(globalFlags, options)));
 
-  const send = program.command('send').description('Send text or files');
+  const send = program.command('send').description('Send text, photos, or files');
   send
     .command('text')
     .description('Send a text message')
@@ -234,6 +244,23 @@ function buildProgram() {
     .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
     .option('--retries <n>', 'Max retries on failure', '0')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
+  send
+    .command('photo')
+    .description('Send a photo with preview')
+    .option('--to <id|username>', 'Recipient id or username')
+    .option('--photo <path>', 'Photo path')
+    .option('--caption <text>', 'Optional caption')
+    .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
+    .option('--topic <id>', 'Forum topic id')
+    .option('--reply-to <id>', 'Reply to message id')
+    .option('--silent', 'Send without notification sound')
+    .option('--no-forwards', 'Protect message from forwarding')
+    .option('--caption-above', 'Show caption above media')
+    .option('--spoiler', 'Blur media until tapped')
+    .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
+    .option('--retries <n>', 'Retry count for transient send failures')
+    .option('--retry-backoff <value>', 'Retry backoff in ms or strategy: constant|linear|exponential')
+    .action(withGlobalOptions((globalFlags, options) => runSendPhoto(globalFlags, options)));
   send
     .command('file')
     .description('Send a file')
@@ -551,6 +578,15 @@ function writeJson(payload) {
 }
 
 function writeError(error, asJson) {
+  if (error instanceof SendCommandError) {
+    if (asJson) {
+      process.stderr.write(`${JSON.stringify(buildSendErrorPayload(error.details), null, 2)}\n`);
+    } else {
+      process.stderr.write(`${formatSendErrorMessage(error.details)}\n`);
+    }
+    return;
+  }
+
   const message = error?.message ?? String(error);
   if (asJson) {
     const payload = { ok: false, error: message };
@@ -952,6 +988,30 @@ async function refreshDialogsWithRetry(messageSyncService, options = {}) {
   }
 }
 
+function normalizeSendCommandError(error, { method, retries, attempt = 1 } = {}) {
+  if (error instanceof SendCommandError) {
+    return error;
+  }
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError || error instanceof RangeError) {
+    return error;
+  }
+  return new SendCommandError(classifySendError(error, { method, retries, attempt }));
+}
+
+function logSendRetry(details, globalFlags) {
+  if (globalFlags.json) {
+    process.stderr.write(`${JSON.stringify({ event: 'retry', type: details.type, method: details.method, message: details.message, attempt: details.attempt, retries: details.retries })}\n`);
+    return;
+  }
+  const totalAttempts = (details.retries ?? 0) + 1;
+  const codeSuffix = details.code !== undefined && details.code !== null && details.code !== ''
+    ? ` (${details.code})`
+    : '';
+  process.stderr.write(
+    `${details.method} transient ${details.type} error on attempt ${details.attempt}/${totalAttempts}${codeSuffix}; retrying...\n`,
+  );
+}
+
 function readVersion() {
   try {
     const pkgPath = new URL('./package.json', import.meta.url);
@@ -1043,8 +1103,8 @@ function parseNonNegativeInt(value, label) {
     return null;
   }
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${label} must be a non-negative number`);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
   }
   return parsed;
 }
@@ -1525,7 +1585,7 @@ async function runSync(globalFlags, options = {}) {
     const follow = options.follow || !options.once;
 
     try {
-      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      if (!(await telegramClient.isAuthorized().catch((err) => { process.stderr.write(`Auth check failed: ${err.message}\n`); return false; }))) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
 
@@ -2851,6 +2911,88 @@ async function runSendText(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runSendPhoto(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  const method = 'sendPhoto';
+  let retries = DEFAULT_SEND_PHOTO_RETRIES;
+
+  try {
+    return await runWithTimeout(async () => {
+      if (!options.to) {
+        throw new Error('--to is required');
+      }
+      if (!options.photo) {
+        throw new Error('--photo is required');
+      }
+
+      const parseMode = parseSendParseMode(options.parseMode);
+      if (parseMode && !(typeof options.caption === 'string' && options.caption.trim())) {
+        throw new Error('--parse-mode requires --caption for send photo');
+      }
+
+      retries = parseNonNegativeInt(options.retries, '--retries') ?? DEFAULT_SEND_PHOTO_RETRIES;
+      const retryBackoff = parseRetryBackoff(options.retryBackoff);
+      const storeDir = resolveStoreDir();
+      const release = acquireStoreLock(storeDir);
+      const { telegramClient, messageSyncService } = createServices({ storeDir });
+      try {
+        if (!(await telegramClient.isAuthorized().catch((err) => { process.stderr.write(`Auth check failed: ${err.message}\n`); return false; }))) {
+          throw new Error('Not authenticated. Run `node cli.js auth` first.');
+        }
+        const topicId = parsePositiveInt(options.topic, '--topic');
+        const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
+        const scheduleDate = parseScheduleDate(options.schedule);
+        const sendOptions = {
+          caption: options.caption,
+          topicId,
+          replyToMessageId,
+          parseMode,
+          silent: options.silent || false,
+          noforwards: options.forwards === false,
+          captionAbove: options.captionAbove || false,
+          spoiler: options.spoiler || false,
+          scheduleDate,
+        };
+        const prepared = await telegramClient.preparePhotoMessage(options.to, options.photo, sendOptions);
+        const { result, attempts } = await executeSendWithRetries(
+          () => telegramClient.sendPreparedPhotoMessage(prepared),
+          {
+            method,
+            retries,
+            retryBackoff,
+            timeoutMs,
+            sleep: (ms) => delay(ms),
+            onRetry: (details) => logSendRetry(details, globalFlags),
+          },
+        );
+
+        if (globalFlags.json) {
+          writeJson(buildSendPhotoSuccessPayload({ method, inputChatId: options.to, result, attempts }));
+        } else {
+          console.log(`Photo sent (${result.messageId}).`);
+        }
+      } finally {
+        await messageSyncService.shutdown();
+        await telegramClient.destroy();
+        release();
+      }
+    }, timeoutMs);
+  } catch (error) {
+    throw normalizeSendCommandError(error, { method, retries });
+  }
+}
+
+function buildSendPhotoSuccessPayload({ method, inputChatId, result, attempts }) {
+  return buildSendSuccessPayload({
+    method,
+    chatId: result?.chatId ?? inputChatId,
+    messageId: result?.messageId,
+    media: result?.media ?? { type: 'photo' },
+    attempts,
+    warning: result?.warning,
+  });
+}
+
 async function runSendFile(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -4013,10 +4155,36 @@ function isCliEntrypoint(argvPath = process.argv[1]) {
   }
 }
 
+function resolveEntrypointPath(filePath) {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    return fs.realpathSync(filePath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error(`[resolveEntrypointPath] realpathSync failed for ${filePath}: ${error?.message}`);
+    }
+    return path.resolve(filePath);
+  }
+}
+
+function shouldRunMain(entryPath = process.argv[1]) {
+  const resolvedEntryPath = resolveEntrypointPath(entryPath);
+  return resolvedEntryPath !== null && resolvedEntryPath === CLI_PATH;
+}
+
 export {
   buildProgram,
+  buildSendPhotoSuccessPayload,
   isCliEntrypoint,
+  logSendRetry,
+  main,
+  normalizeSendCommandError,
+  parseNonNegativeInt,
   runAuthLogin,
+  shouldRunMain,
+  writeError,
 };
 
 if (isCliEntrypoint()) {
