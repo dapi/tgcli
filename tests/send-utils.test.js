@@ -121,6 +121,80 @@ describe('executeSendWithRetries', () => {
     expect(result).toEqual({ result: { messageId: 100 }, attempts: 2 });
   });
 
+  it('logs onRetry callback errors to stderr instead of swallowing them', async () => {
+    const sendFn = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }))
+      .mockResolvedValueOnce({ messageId: 100 });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const callbackError = new TypeError('bad callback');
+    const onRetry = vi.fn(() => { throw callbackError; });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await executeSendWithRetries(sendFn, {
+      method: 'sendPhoto',
+      retries: 2,
+      retryBackoff: parseRetryBackoff('10'),
+      sleep,
+      onRetry,
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('onRetry'),
+      expect.any(TypeError),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('fails immediately with retries: 0 and does not sleep', async () => {
+    const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 0,
+        retryBackoff: parseRetryBackoff('10'),
+        sleep,
+      }),
+    ).rejects.toMatchObject({
+      name: 'SendCommandError',
+      details: expect.objectContaining({
+        type: 'network',
+        attempt: 1,
+        retries: 0,
+      }),
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('throws SendCommandError after exhausting all retries', async () => {
+    const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 2,
+        retryBackoff: parseRetryBackoff('10'),
+        sleep,
+      }),
+    ).rejects.toMatchObject({
+      name: 'SendCommandError',
+      details: expect.objectContaining({
+        type: 'network',
+        method: 'sendPhoto',
+        attempt: 3,
+        retries: 2,
+        retryable: true,
+      }),
+    });
+
+    expect(sendFn).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
   it('stops retrying when the timeout budget is exhausted during backoff', async () => {
     let currentTime = 0;
     const now = vi.fn(() => currentTime);
@@ -174,6 +248,25 @@ describe('send payload builders', () => {
       },
       attempts: 2,
     });
+  });
+
+  it('omits media field when media is absent or empty', () => {
+    const withoutMedia = buildSendSuccessPayload({
+      method: 'sendPhoto',
+      chatId: 123,
+      messageId: 456,
+      attempts: 1,
+    });
+    expect(withoutMedia).not.toHaveProperty('media');
+
+    const withEmptyMedia = buildSendSuccessPayload({
+      method: 'sendPhoto',
+      chatId: 123,
+      messageId: 456,
+      media: {},
+      attempts: 1,
+    });
+    expect(withEmptyMedia).not.toHaveProperty('media');
   });
 
   it('creates structured JSON error payload', () => {
@@ -293,6 +386,20 @@ describe('getRetryDelayMs', () => {
 
   it('falls back to constant for undefined backoff', () => {
     expect(getRetryDelayMs(undefined, 2)).toBe(1000);
+  });
+});
+
+describe('parseRetryBackoff validation', () => {
+  it('throws on invalid string input', () => {
+    expect(() => parseRetryBackoff('invalid')).toThrow(
+      '--retry-backoff must be a non-negative integer or one of: constant, linear, exponential',
+    );
+  });
+
+  it('throws on negative numeric string', () => {
+    expect(() => parseRetryBackoff('-5')).toThrow(
+      '--retry-backoff must be a non-negative integer or one of: constant, linear, exponential',
+    );
   });
 });
 

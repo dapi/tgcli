@@ -139,6 +139,9 @@ backlog.md
 
 # pr-review-fix-loop local artifacts
 .claude/*.local.md
+.claude/pr-review-loop-stats.local.json
+.codex-review.md
+.codex-review.stderr
 
 # Skills installer artifacts (npx skills add)
 .agents/

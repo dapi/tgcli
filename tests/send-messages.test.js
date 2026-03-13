@@ -498,6 +498,22 @@ describe('sendPhotoMessage', () => {
     expect(tc.client._normalizeInputMedia).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects --parse-mode without --caption for preparePhotoMessage', async () => {
+    await expect(
+      tc.preparePhotoMessage('@chat', png.filePath, { parseMode: 'markdown' }),
+    ).rejects.toThrow('--parse-mode requires --caption for send photo');
+  });
+
+  it('throws when extractMessageIdFromSendUpdates returns null (no matching update)', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [],
+    });
+
+    await expect(
+      tc.sendPhotoMessage('@chat', png.filePath, {}),
+    ).rejects.toThrow('Failed to resolve sent photo message id from Telegram updates.');
+  });
+
   it('does not upload during preparePhotoMessage, so upload failures can be retried later', async () => {
     await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
     expect(tc.client.resolvePeer).not.toHaveBeenCalled();

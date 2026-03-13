@@ -4162,7 +4162,10 @@ function resolveEntrypointPath(filePath) {
   }
   try {
     return fs.realpathSync(filePath);
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error(`[resolveEntrypointPath] realpathSync failed for ${filePath}: ${error?.message}`);
+    }
     return path.resolve(filePath);
   }
 }

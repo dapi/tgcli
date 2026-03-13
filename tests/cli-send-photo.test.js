@@ -54,4 +54,26 @@ describe('tgcli send photo CLI validation', () => {
       attempts: 2,
     });
   });
+
+  it('falls back to inputChatId when result.chatId is absent', () => {
+    expect(buildSendPhotoSuccessPayload({
+      method: 'sendPhoto',
+      inputChatId: '@fallback-alias',
+      result: {
+        messageId: 789,
+        media: { type: 'photo', fileId: 'some-id' },
+      },
+      attempts: 1,
+    })).toEqual({
+      ok: true,
+      method: 'sendPhoto',
+      chat_id: '@fallback-alias',
+      message_id: 789,
+      media: {
+        type: 'photo',
+        file_id: 'some-id',
+      },
+      attempts: 1,
+    });
+  });
 });

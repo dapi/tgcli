@@ -285,8 +285,8 @@ export async function executeSendWithRetries(sendFn, options = {}) {
       if (typeof options.onRetry === 'function') {
         try {
           options.onRetry(details);
-        } catch {
-          // onRetry callback failure must not break the retry loop
+        } catch (callbackError) {
+          console.error('[executeSendWithRetries] onRetry callback error:', callbackError);
         }
       }
 
