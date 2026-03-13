@@ -12,6 +12,7 @@ import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.j
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
+import { withSendRetry } from './core/retry.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
@@ -231,6 +232,7 @@ function buildProgram() {
     .option('--silent', 'Send without notification sound')
     .option('--no-forwards', 'Protect message from forwarding')
     .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
+    .option('--retries <n>', 'Max retries on failure', '0')
     .action(withGlobalOptions((globalFlags, options) => runSendText(globalFlags, options)));
   send
     .command('file')
@@ -248,6 +250,7 @@ function buildProgram() {
     .option('--spoiler', 'Blur media until tapped')
     .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
     .option('--force-document', 'Send as uncompressed document')
+    .option('--retries <n>', 'Max retries on failure', '0')
     .action(withGlobalOptions((globalFlags, options) => runSendFile(globalFlags, options)));
 
   const media = program.command('media').description('Download media');
@@ -549,11 +552,17 @@ function writeJson(payload) {
 function writeError(error, asJson) {
   const message = error?.message ?? String(error);
   if (asJson) {
-    process.stderr.write(`${JSON.stringify({ ok: false, error: message })}\n`);
+    const payload = { ok: false, error: message };
+    if (error?.retryLog?.length > 0) {
+      payload.attempts = error.attempts;
+      payload.retry_log = error.retryLog;
+    }
+    process.stderr.write(`${JSON.stringify(payload)}\n`);
   } else {
     process.stderr.write(`${message}\n`);
   }
 }
+
 
 function collectOption(value, previous) {
   return previous.concat([value]);
@@ -2832,16 +2841,24 @@ async function runSendText(globalFlags, options = {}) {
       const topicId = parsePositiveInt(options.topic, '--topic');
       const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
       const scheduleDate = parseScheduleDate(options.schedule);
-      const result = await telegramClient.sendTextMessage(options.to, options.message, {
-        topicId,
-        replyToMessageId,
-        parseMode,
-        noPreview: options.noPreview,
-        silent: options.silent || false,
-        noforwards: options.forwards === false,
-        scheduleDate,
-      });
+      const retries = Math.max(0, parseInt(options.retries, 10) || 0);
+      const { result, retryLog, attempts } = await withSendRetry(
+        () => telegramClient.sendTextMessage(options.to, options.message, {
+          topicId,
+          replyToMessageId,
+          parseMode,
+          noPreview: options.noPreview,
+          silent: options.silent || false,
+          noforwards: options.forwards === false,
+          scheduleDate,
+        }),
+        { retries, json: globalFlags.json }
+      );
       const payload = { channelId: options.to, ...result };
+      if (retryLog.length > 0) {
+        payload.attempts = attempts;
+        payload.retry_log = retryLog;
+      }
 
       if (globalFlags.json) {
         writeJson(payload);
@@ -2879,20 +2896,28 @@ async function runSendFile(globalFlags, options = {}) {
       const topicId = parsePositiveInt(options.topic, '--topic');
       const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
       const scheduleDate = parseScheduleDate(options.schedule);
-      const result = await telegramClient.sendFileMessage(options.to, options.file, {
-        caption: options.caption,
-        filename: options.filename,
-        topicId,
-        replyToMessageId,
-        parseMode,
-        silent: options.silent || false,
-        noforwards: options.forwards === false,
-        captionAbove: options.captionAbove || false,
-        spoiler: options.spoiler || false,
-        scheduleDate,
-        forceDocument: options.forceDocument || false,
-      });
+      const retries = Math.max(0, parseInt(options.retries, 10) || 0);
+      const { result, retryLog, attempts } = await withSendRetry(
+        () => telegramClient.sendFileMessage(options.to, options.file, {
+          caption: options.caption,
+          filename: options.filename,
+          topicId,
+          replyToMessageId,
+          parseMode,
+          silent: options.silent || false,
+          noforwards: options.forwards === false,
+          captionAbove: options.captionAbove || false,
+          spoiler: options.spoiler || false,
+          scheduleDate,
+          forceDocument: options.forceDocument || false,
+        }),
+        { retries, json: globalFlags.json }
+      );
       const payload = { channelId: options.to, ...result };
+      if (retryLog.length > 0) {
+        payload.attempts = attempts;
+        payload.retry_log = retryLog;
+      }
 
       if (globalFlags.json) {
         writeJson(payload);

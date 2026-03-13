@@ -67,6 +67,7 @@ tgcli auth
   - `--caption-above` shows caption above media (`send file` only, requires `--caption`)
   - `--spoiler` blurs media until tapped (`send file` only)
   - `--force-document` sends photo/video as uncompressed document (`send file` only)
+  - `--retries <n>` retry on failure with exponential backoff (default 0); JSON output includes `retry_log` and `attempts` when retries occurred
 - Telegram markdown formatting (when `--parse-mode markdown`):
   - Bold: `**text**`
   - Italic: `__text__` (double underscores, NOT single `_`)
@@ -118,6 +119,7 @@ tgcli send text --to <id|@username> --message "https://example.com check this" -
 tgcli send text --to <id|@username> --message "Nightly report" --silent --json --timeout 30s
 tgcli send text --to <id|@username> --message "Confidential" --no-forwards --json --timeout 30s
 tgcli send text --to <id|@username> --message "Good morning!" --schedule "2025-01-15T09:00:00+03:00" --json --timeout 30s
+tgcli send text --to <id|@username> --message "Hello" --retries 3 --json --timeout 30s
 
 tgcli send file --to <id|@username> --file /path/to/file --caption "Report" --json --timeout 30s
 tgcli send file --to <id|@username> --file /path/to/file --caption "<b>Report</b>" --parse-mode html --json --timeout 30s
