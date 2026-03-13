@@ -3735,20 +3735,17 @@ async function runFoldersShow(globalFlags, folder, opts = {}) {
           const printResolvedPeers = (peers, label) => {
             if (!peers?.length) return;
             if (label) console.log(`  ${label}:`);
+            const indent = label ? '    ' : '  ';
             const grouped = {};
             for (const p of peers) {
-              const group = label ? null : p.type + 's';
+              const group = p.type + 's';
+              if (!grouped[group]) grouped[group] = [];
               const displayName = p.name ?? p.title ?? '(unresolved)';
-              if (group) {
-                if (!grouped[group]) grouped[group] = [];
-                grouped[group].push(`${displayName} (${p.id})`);
-              } else {
-                console.log(`    - ${displayName} (${p.id})`);
-              }
+              grouped[group].push(`${displayName} (${p.id})`);
             }
             for (const [group, items] of Object.entries(grouped)) {
-              console.log(`  ${group}:`);
-              for (const item of items) console.log(`    - ${item}`);
+              console.log(`${indent}${group}:`);
+              for (const item of items) console.log(`${indent}  - ${item}`);
             }
           };
           printResolvedPeers(info.includePeers);
