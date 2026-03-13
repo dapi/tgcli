@@ -471,6 +471,12 @@ describe('getRetryDelayMs', () => {
   it('falls back to constant for undefined backoff', () => {
     expect(getRetryDelayMs(undefined, 2)).toBe(1000);
   });
+
+  it('works with explicit object not produced by parseRetryBackoff', () => {
+    expect(getRetryDelayMs({ kind: 'exponential', baseMs: 500 }, 3)).toBe(2000);
+    expect(getRetryDelayMs({ kind: 'linear', baseMs: 200 }, 4)).toBe(800);
+    expect(getRetryDelayMs({ kind: 'constant', baseMs: 300 }, 5)).toBe(300);
+  });
 });
 
 describe('parseRetryBackoff validation', () => {
