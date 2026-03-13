@@ -1012,12 +1012,6 @@ function logSendRetry(details, globalFlags) {
   );
 }
 
-function formatErrorMessage(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-}
-
 function readVersion() {
   try {
     const pkgPath = new URL('./package.json', import.meta.url);
