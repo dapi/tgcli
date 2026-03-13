@@ -1136,6 +1136,7 @@ class TelegramClient {
         _: 'messages.sendMedia',
         silent: options.silent ? true : undefined,
         replyTo: buildLowLevelReplyTo(options),
+        // Fixed per prepared object — reused across retries for Telegram-level send idempotency.
         randomId: options.randomId ?? randomLong(),
         scheduleDate: resolveScheduleDate(options),
         message,

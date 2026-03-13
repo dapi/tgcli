@@ -308,6 +308,8 @@ export async function executeSendWithRetries(sendFn, options = {}) {
     }
   }
 
+  // Unreachable: the loop always exits via return (success) or throw (in catch).
+  // Kept as a safety net in case future refactors break the loop invariant.
   throw new SendCommandError(createTimeoutDetails({ method, attempt: retries + 1, retries }));
 }
 
