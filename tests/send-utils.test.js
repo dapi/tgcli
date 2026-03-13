@@ -225,6 +225,23 @@ describe('executeSendWithRetries', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it('coerces invalid retries (negative, fractional) to 0', async () => {
+    const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    for (const retries of [-1, 1.5, NaN]) {
+      sendFn.mockClear();
+      sleep.mockClear();
+
+      await expect(
+        executeSendWithRetries(sendFn, { method: 'sendPhoto', retries, sleep }),
+      ).rejects.toMatchObject({ name: 'SendCommandError' });
+
+      expect(sendFn).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    }
+  });
+
   it('throws SendCommandError after exhausting all retries', async () => {
     const sendFn = vi.fn().mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
     const sleep = vi.fn().mockResolvedValue(undefined);
@@ -337,6 +354,18 @@ describe('send payload builders', () => {
     expect(withEmptyMedia).not.toHaveProperty('media');
   });
 
+  it('includes code:0 in error payload (falsy but valid)', () => {
+    const result = buildSendErrorPayload({
+      type: 'telegram',
+      method: 'sendPhoto',
+      message: 'Some error',
+      code: 0,
+      attempt: 1,
+      retries: 0,
+    });
+    expect(result.error.code).toBe(0);
+  });
+
   it('creates structured JSON error payload', () => {
     const error = new SendCommandError({
       type: 'network',
@@ -438,6 +467,14 @@ describe('classifySendError', () => {
   it('classifies unknown errors as non-retryable unknown fallback', () => {
     const result = classifySendError(new Error('something weird'), { method: 'sendPhoto' });
     expect(result).toMatchObject({ type: 'unknown', retryable: false });
+  });
+
+  it('handles null and primitive error arguments', () => {
+    const nullResult = classifySendError(null, { method: 'sendPhoto' });
+    expect(nullResult).toMatchObject({ type: 'unknown', message: 'Unknown error' });
+
+    const stringResult = classifySendError('raw string error', { method: 'sendPhoto' });
+    expect(stringResult).toMatchObject({ type: 'unknown', message: 'raw string error' });
   });
 
   it('passes method, attempt, and retries through', () => {
