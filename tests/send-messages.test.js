@@ -544,6 +544,18 @@ describe('sendPhotoMessage', () => {
     ).rejects.toThrow('Failed to resolve sent photo message id from Telegram updates.');
   });
 
+  it('extracts messageId from updateNewChannelMessage when updateMessageID is absent', async () => {
+    tc.client.call.mockResolvedValueOnce({
+      updates: [
+        { _: 'updateNewChannelMessage', message: { id: 808 } },
+      ],
+    });
+    tc.client.getMessages.mockResolvedValueOnce([{ id: 808, media: { type: 'photo', fileId: 'fallback-id' } }]);
+
+    const result = await tc.sendPhotoMessage('@chat', png.filePath, {});
+    expect(result).toMatchObject({ messageId: 808 });
+  });
+
   it('does not upload during preparePhotoMessage, so upload failures can be retried later', async () => {
     await tc.preparePhotoMessage('@chat', png.filePath, { caption: 'retry me' });
     expect(tc.client.resolvePeer).not.toHaveBeenCalled();

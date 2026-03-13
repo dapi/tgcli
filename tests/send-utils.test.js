@@ -474,6 +474,12 @@ describe('classifySendError', () => {
     expect(result).toMatchObject({ type: 'timeout', retryable: true, code: 'ETIMEDOUT' });
   });
 
+  it('classifies ETIMEDOUT code with bare "Timeout" message as retryable (code takes precedence)', () => {
+    const error = Object.assign(new Error('Timeout'), { code: 'ETIMEDOUT' });
+    const result = classifySendError(error, { method: 'sendPhoto' });
+    expect(result).toMatchObject({ type: 'timeout', retryable: true, code: 'ETIMEDOUT' });
+  });
+
   it('classifies bare "timeout" message as non-retryable timeout', () => {
     const result = classifySendError(new Error('Timeout'), { method: 'sendPhoto' });
     expect(result).toMatchObject({ type: 'timeout', retryable: false });
