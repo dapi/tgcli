@@ -145,6 +145,32 @@ describe('executeSendWithRetries', () => {
     errorSpy.mockRestore();
   });
 
+  it('throws timeout before first attempt when budget already expired', async () => {
+    let currentTime = 100;
+    const now = vi.fn(() => currentTime);
+    const sendFn = vi.fn();
+    const sleep = vi.fn();
+
+    await expect(
+      executeSendWithRetries(sendFn, {
+        method: 'sendPhoto',
+        retries: 2,
+        timeoutMs: 1,
+        now: () => { currentTime += 10; return currentTime; },
+        sleep,
+      }),
+    ).rejects.toMatchObject({
+      name: 'SendCommandError',
+      details: expect.objectContaining({
+        type: 'timeout',
+        attempt: 1,
+        retries: 2,
+      }),
+    });
+
+    expect(sendFn).not.toHaveBeenCalled();
+  });
+
   it('throws timeout when budget expires before second attempt', async () => {
     let currentTime = 0;
     const now = vi.fn(() => currentTime);
@@ -280,6 +306,18 @@ describe('send payload builders', () => {
     });
   });
 
+  it('includes media with only type when fileId is absent', () => {
+    const result = buildSendSuccessPayload({
+      method: 'sendPhoto',
+      chatId: 123,
+      messageId: 456,
+      media: { type: 'photo' },
+      attempts: 1,
+    });
+    expect(result.media).toEqual({ type: 'photo' });
+    expect(result.media).not.toHaveProperty('file_id');
+  });
+
   it('omits media field when media is absent or empty', () => {
     const withoutMedia = buildSendSuccessPayload({
       method: 'sendPhoto',
@@ -375,7 +413,7 @@ describe('classifySendError', () => {
     expect(result).toMatchObject({ type: 'telegram', retryable: false, code: 403 });
   });
 
-  it('classifies FLOOD_WAIT message as non-retryable telegram error', () => {
+  it('classifies FLOOD_WAIT as non-retryable telegram error (retry requires dynamic backoff not yet supported)', () => {
     const result = classifySendError(new Error('FLOOD_WAIT_30'), { method: 'sendPhoto' });
     expect(result).toMatchObject({ type: 'telegram', retryable: false });
   });
@@ -386,9 +424,9 @@ describe('classifySendError', () => {
     expect(result).toMatchObject({ type: 'telegram', retryable: false });
   });
 
-  it('classifies unknown errors as non-retryable network fallback', () => {
+  it('classifies unknown errors as non-retryable unknown fallback', () => {
     const result = classifySendError(new Error('something weird'), { method: 'sendPhoto' });
-    expect(result).toMatchObject({ type: 'network', retryable: false });
+    expect(result).toMatchObject({ type: 'unknown', retryable: false });
   });
 
   it('passes method, attempt, and retries through', () => {
@@ -464,6 +502,6 @@ describe('formatSendErrorMessage', () => {
 
   it('uses defaults for missing fields', () => {
     const msg = formatSendErrorMessage({});
-    expect(msg).toBe('sendMedia failed [network]: Unknown error (attempt 1/1)');
+    expect(msg).toBe('sendMedia failed [unknown]: Unknown error (attempt 1/1)');
   });
 });

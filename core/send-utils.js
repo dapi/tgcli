@@ -217,7 +217,7 @@ export function classifySendError(error, { method, attempt = 1, retries = 0 } = 
   }
 
   return {
-    type: 'network',
+    type: 'unknown',
     method,
     message,
     code,
@@ -336,7 +336,7 @@ export function buildSendErrorPayload(details = {}) {
   const payload = {
     ok: false,
     error: {
-      type: details.type ?? 'network',
+      type: details.type ?? 'unknown',
       method: details.method ?? 'sendMedia',
       message: details.message ?? 'Unknown error',
       attempt: details.attempt ?? 1,
@@ -358,5 +358,5 @@ export function formatSendErrorMessage(details = {}) {
   const codeSuffix = details.code !== undefined && details.code !== null && details.code !== ''
     ? `, code ${details.code}`
     : '';
-  return `${details.method ?? 'sendMedia'} failed [${details.type ?? 'network'}]: ${details.message ?? 'Unknown error'} (attempt ${attempt}/${totalAttempts}${codeSuffix})`;
+  return `${details.method ?? 'sendMedia'} failed [${details.type ?? 'unknown'}]: ${details.message ?? 'Unknown error'} (attempt ${attempt}/${totalAttempts}${codeSuffix})`;
 }

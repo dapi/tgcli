@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildSendPhotoSuccessPayload, parseNonNegativeInt, shouldRunMain } from '../cli.js';
+import { buildSendPhotoSuccessPayload, normalizeSendCommandError, parseNonNegativeInt, shouldRunMain } from '../cli.js';
+import { SendCommandError } from '../core/send-utils.js';
 
 describe('tgcli send photo CLI validation', () => {
   const tempDirs = [];
@@ -75,5 +76,28 @@ describe('tgcli send photo CLI validation', () => {
       },
       attempts: 1,
     });
+  });
+});
+
+describe('normalizeSendCommandError', () => {
+  it('passes through SendCommandError as-is', () => {
+    const details = { type: 'validation', method: 'sendPhoto', message: 'bad', attempt: 1, retries: 0 };
+    const err = new SendCommandError(details);
+    expect(normalizeSendCommandError(err, { method: 'sendPhoto' })).toBe(err);
+  });
+
+  it('does not wrap TypeError into SendCommandError', () => {
+    const err = new TypeError('x is not a function');
+    const result = normalizeSendCommandError(err, { method: 'sendPhoto' });
+    expect(result).toBe(err);
+    expect(result).toBeInstanceOf(TypeError);
+  });
+
+  it('wraps operational errors into SendCommandError', () => {
+    const err = new Error('ECONNRESET');
+    err.code = 'ECONNRESET';
+    const result = normalizeSendCommandError(err, { method: 'sendPhoto', retries: 2 });
+    expect(result).toBeInstanceOf(SendCommandError);
+    expect(result.details).toMatchObject({ type: 'network', method: 'sendPhoto' });
   });
 });

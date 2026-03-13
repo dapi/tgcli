@@ -992,6 +992,9 @@ function normalizeSendCommandError(error, { method, retries, attempt = 1 } = {})
   if (error instanceof SendCommandError) {
     return error;
   }
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError || error instanceof RangeError) {
+    return error;
+  }
   return new SendCommandError(classifySendError(error, { method, retries, attempt }));
 }
 
@@ -4181,6 +4184,7 @@ export {
   buildSendPhotoSuccessPayload,
   isCliEntrypoint,
   main,
+  normalizeSendCommandError,
   parseNonNegativeInt,
   runAuthLogin,
   shouldRunMain,
