@@ -212,6 +212,23 @@ tgcli metadata refresh --chat <id|@username> --force --json --timeout 30s
 tgcli metadata refresh --only-missing --limit 50 --json --timeout 90s
 ```
 
+### Folders
+
+```bash
+tgcli folders list --json --timeout 30s
+tgcli folders show <name|id> --json --timeout 30s
+tgcli folders show <name|id> --resolve --json --timeout 30s
+tgcli folders create --title "Name" --emoji "🤖" --json --timeout 30s
+tgcli folders edit <name|id> --title "New Name" --json --timeout 30s
+tgcli folders delete <name|id> --json --timeout 30s
+tgcli folders order <id1> <id2> <id3> --json --timeout 30s
+tgcli folders add-chat <folder> --chat <id> --json --timeout 30s
+tgcli folders remove-chat <folder> --chat <id> --json --timeout 30s
+tgcli folders join --link "https://t.me/addlist/slug" --json --timeout 30s
+```
+
+Use `--resolve` with `folders show` to resolve peer IDs to readable channel/user names (slower, requires API calls per peer). Without `--resolve`, peers are shown as typed IDs (e.g., `channel:123`).
+
 ### Sync Jobs
 
 ```bash
