@@ -18,6 +18,8 @@ function createMockClient() {
     deleteFolder: vi.fn(),
     setFoldersOrder: vi.fn(),
     joinChatlist: vi.fn(),
+    getChat: vi.fn(),
+    getFullUser: vi.fn(),
   };
   return tc;
 }
@@ -650,5 +652,46 @@ describe('joinChatlist', () => {
 
   it('rejects path traversal in slug', async () => {
     await expect(tc.joinChatlist('https://t.me/addlist/abc/../../evil')).rejects.toThrow('Invalid chatlist link');
+  });
+});
+
+describe('_resolvePeerName', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('resolves channel name via getChat', async () => {
+    tc.client.getChat.mockResolvedValue({ displayName: 'ИИшница' });
+    const result = await tc._resolvePeerName('channel', 1951583351);
+    expect(result).toBe('ИИшница');
+  });
+
+  it('resolves user name via getFullUser', async () => {
+    tc.client.getFullUser.mockResolvedValue({ displayName: 'Иван Иванов' });
+    const result = await tc._resolvePeerName('user', 272066824);
+    expect(result).toBe('Иван Иванов');
+  });
+
+  it('resolves chat name via getChat', async () => {
+    tc.client.getChat.mockResolvedValue({ displayName: 'Dev Chat' });
+    const result = await tc._resolvePeerName('chat', 555);
+    expect(result).toBe('Dev Chat');
+  });
+
+  it('falls back to title field', async () => {
+    tc.client.getChat.mockResolvedValue({ title: 'Fallback Title' });
+    const result = await tc._resolvePeerName('channel', 123);
+    expect(result).toBe('Fallback Title');
+  });
+
+  it('returns null on error', async () => {
+    tc.client.getChat.mockRejectedValue(new Error('PEER_NOT_FOUND'));
+    const result = await tc._resolvePeerName('channel', 999);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for user resolution error', async () => {
+    tc.client.getFullUser.mockRejectedValue(new Error('USER_NOT_FOUND'));
+    const result = await tc._resolvePeerName('user', 999);
+    expect(result).toBeNull();
   });
 });

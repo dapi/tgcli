@@ -1535,6 +1535,19 @@ class TelegramClient {
     return { type, id };
   }
 
+  async _resolvePeerName(type, id) {
+    try {
+      if (type === 'user') {
+        const user = await this.client.getFullUser(id);
+        return user.displayName || user.firstName || null;
+      }
+      const chat = await this.client.getChat(id);
+      return chat.displayName || chat.title || null;
+    } catch {
+      return null;
+    }
+  }
+
   async joinChatlist(link) {
     await this.ensureLogin();
     if (!/^https?:\/\/t\.me\/addlist\/[a-zA-Z0-9_-]+\/?(\?[^\s]*)?$/.test(link)) {
