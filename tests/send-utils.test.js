@@ -395,6 +395,17 @@ describe('classifySendError', () => {
     expect(result).toMatchObject({ type: 'timeout', retryable: true });
   });
 
+  it('classifies "Request timeout" substring as retryable timeout', () => {
+    const result = classifySendError(new Error('Request timeout exceeded'), { method: 'sendPhoto' });
+    expect(result).toMatchObject({ type: 'timeout', retryable: true });
+  });
+
+  it('classifies MtRpcError by name as telegram error', () => {
+    const error = Object.assign(new Error('PEER_ID_INVALID'), { name: 'MtRpcError' });
+    const result = classifySendError(error, { method: 'sendPhoto' });
+    expect(result).toMatchObject({ type: 'telegram', retryable: false });
+  });
+
   it('classifies ECONNRESET as retryable network error', () => {
     const error = Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' });
     const result = classifySendError(error, { method: 'sendPhoto' });
