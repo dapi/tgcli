@@ -3971,7 +3971,8 @@ function isCliEntrypoint(argvPath = process.argv[1]) {
   }
   try {
     return pathToFileURL(fs.realpathSync(argvPath)).href === import.meta.url;
-  } catch {
+  } catch (error) {
+    process.stderr.write(`isCliEntrypoint: realpathSync failed for ${argvPath}: ${error.message}\n`);
     return pathToFileURL(path.resolve(argvPath)).href === import.meta.url;
   }
 }
