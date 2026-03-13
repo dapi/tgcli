@@ -12,7 +12,7 @@ import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.j
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
 import { resolveStoreDir } from './core/store.js';
-import { withSendRetry } from './core/retry.js';
+import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
@@ -936,29 +936,6 @@ function runWithTimeout(task, timeoutMs, onTimeout) {
   });
 }
 
-function formatErrorMessage(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return String(error);
-}
-
-function parseRequiredWaitSeconds(error) {
-  const text = formatErrorMessage(error);
-  const waitMatch = /wait of (\d+) seconds is required/i.exec(text);
-  if (waitMatch) {
-    return Number(waitMatch[1]);
-  }
-  const floodWaitMatch = /FLOOD_WAIT_(\d+)/i.exec(text);
-  if (floodWaitMatch) {
-    return Number(floodWaitMatch[1]);
-  }
-  return null;
-}
-
 async function refreshDialogsWithRetry(messageSyncService, options = {}) {
   const maxWaitSeconds = options.maxWaitSeconds ?? 30;
   try {
@@ -968,7 +945,7 @@ async function refreshDialogsWithRetry(messageSyncService, options = {}) {
     if (!waitSeconds || waitSeconds > maxWaitSeconds) {
       throw error;
     }
-    console.log(`Rate limited while seeding dialogs. Waiting ${waitSeconds}s and retrying once...`);
+    process.stderr.write(`Rate limited while seeding dialogs. Waiting ${waitSeconds}s and retrying once...\n`);
     await delay(waitSeconds * 1000);
     return await messageSyncService.refreshChannelsFromDialogs();
   }

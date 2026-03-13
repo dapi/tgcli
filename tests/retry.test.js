@@ -99,26 +99,40 @@ describe('withSendRetry', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('returns result after 1 retry', async () => {
+  it('returns result after 1 retry on network error', async () => {
+    const networkError = new Error('connect ETIMEDOUT 1.2.3.4:443');
     const fn = vi.fn()
-      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockRejectedValueOnce(networkError)
       .mockResolvedValueOnce('ok');
     const result = await withSendRetry(fn, { retries: 2 });
     expect(result.result).toBe('ok');
     expect(result.attempts).toBe(2);
     expect(result.retryLog).toHaveLength(1);
     expect(result.retryLog[0].attempt).toBe(1);
-    expect(result.retryLog[0].error.type).toBe('api');
-    expect(result.retryLog[0].error.message).toBe('temporary failure');
+    expect(result.retryLog[0].error.type).toBe('network');
+    expect(result.retryLog[0].waitSeconds).toBe(1);
   });
 
-  it('throws after max retries exhausted', async () => {
-    const fn = vi.fn().mockRejectedValue(new Error('persistent failure'));
+  it('throws immediately on non-retryable api error', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('CHAT_WRITE_FORBIDDEN'));
+    try {
+      await withSendRetry(fn, { retries: 3 });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error.message).toBe('CHAT_WRITE_FORBIDDEN');
+      expect(error.retryLog).toEqual([]);
+      expect(error.attempts).toBe(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('throws after max retries exhausted on network errors', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('connect ECONNRESET'));
     try {
       await withSendRetry(fn, { retries: 2 });
       expect.unreachable('should have thrown');
     } catch (error) {
-      expect(error.message).toBe('persistent failure');
+      expect(error.message).toBe('connect ECONNRESET');
       expect(error.retryLog).toHaveLength(2);
       expect(error.attempts).toBe(3);
     }
@@ -132,6 +146,18 @@ describe('withSendRetry', () => {
     } catch (error) {
       expect(error.message).toBe('fail');
       expect(error.retryLog).toEqual([]);
+      expect(error.attempts).toBe(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('throws when FLOOD_WAIT exceeds maxWaitSeconds', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('FLOOD_WAIT_3600'));
+    try {
+      await withSendRetry(fn, { retries: 3, maxWaitSeconds: 60 });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error.message).toBe('FLOOD_WAIT_3600');
       expect(error.attempts).toBe(1);
       expect(fn).toHaveBeenCalledTimes(1);
     }
@@ -154,26 +180,28 @@ describe('withSendRetry', () => {
 
   it('writes human-readable retry message to stderr in non-json mode', async () => {
     const fn = vi.fn()
-      .mockRejectedValueOnce(new Error('connection lost'))
+      .mockRejectedValueOnce(new Error('connect ETIMEDOUT 1.2.3.4:443'))
       .mockResolvedValueOnce('ok');
     await withSendRetry(fn, { retries: 1, json: false });
     expect(stderrSpy).toHaveBeenCalledTimes(1);
     const written = stderrSpy.mock.calls[0][0];
     expect(written).toContain('Retry 1/1');
-    expect(written).toContain('API');
-    expect(written).toContain('connection lost');
+    expect(written).toContain('NETWORK');
+    expect(written).toContain('ETIMEDOUT');
     expect(written).toContain('Waiting 1s');
   });
 
   it('accumulates multiple retries in retryLog', async () => {
     const fn = vi.fn()
-      .mockRejectedValueOnce(new Error('fail 1'))
-      .mockRejectedValueOnce(new Error('fail 2'))
+      .mockRejectedValueOnce(new Error('connect ECONNRESET'))
+      .mockRejectedValueOnce(new Error('connect ETIMEDOUT'))
       .mockResolvedValueOnce('ok');
     const result = await withSendRetry(fn, { retries: 3 });
     expect(result.attempts).toBe(3);
     expect(result.retryLog).toHaveLength(2);
     expect(result.retryLog[0].attempt).toBe(1);
+    expect(result.retryLog[0].waitSeconds).toBe(1);
     expect(result.retryLog[1].attempt).toBe(2);
+    expect(result.retryLog[1].waitSeconds).toBe(2);
   });
 });

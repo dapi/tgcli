@@ -48,6 +48,7 @@ function computeRetryWaitSeconds(error, attempt) {
 async function withSendRetry(fn, options = {}) {
   const maxRetries = options.retries ?? 0;
   const json = options.json ?? false;
+  const maxWaitSeconds = options.maxWaitSeconds ?? 300;
   const retryLog = [];
   const maxAttempts = maxRetries + 1;
 
@@ -56,18 +57,26 @@ async function withSendRetry(fn, options = {}) {
       const result = await fn();
       return { result, retryLog, attempts: attempt };
     } catch (error) {
-      if (attempt >= maxAttempts) {
+      const classified = classifyError(error);
+
+      if (attempt >= maxAttempts || classified.type === 'api') {
         error.retryLog = retryLog;
         error.attempts = attempt;
         throw error;
       }
 
-      const classified = classifyError(error);
       const waitSeconds = computeRetryWaitSeconds(error, attempt);
+
+      if (waitSeconds > maxWaitSeconds) {
+        error.retryLog = retryLog;
+        error.attempts = attempt;
+        throw error;
+      }
 
       retryLog.push({
         attempt,
         error: classified,
+        waitSeconds,
       });
 
       if (json) {
@@ -87,4 +96,4 @@ async function withSendRetry(fn, options = {}) {
   }
 }
 
-export { classifyError, computeRetryWaitSeconds, withSendRetry };
+export { formatErrorMessage, parseRequiredWaitSeconds, classifyError, computeRetryWaitSeconds, withSendRetry };
