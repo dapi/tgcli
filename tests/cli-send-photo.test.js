@@ -79,6 +79,38 @@ describe('tgcli send photo CLI validation', () => {
   });
 });
 
+describe('buildSendPhotoSuccessPayload with warning', () => {
+  it('propagates warning from result into JSON payload', () => {
+    const payload = buildSendPhotoSuccessPayload({
+      method: 'sendPhoto',
+      inputChatId: '@chat',
+      result: {
+        chatId: '999',
+        messageId: 505,
+        media: { type: 'photo' },
+        warning: 'Media enrichment failed; file_id unavailable',
+      },
+      attempts: 1,
+    });
+    expect(payload.warning).toBe('Media enrichment failed; file_id unavailable');
+    expect(payload.ok).toBe(true);
+  });
+
+  it('omits warning when result has no warning', () => {
+    const payload = buildSendPhotoSuccessPayload({
+      method: 'sendPhoto',
+      inputChatId: '@chat',
+      result: {
+        chatId: '999',
+        messageId: 123,
+        media: { type: 'photo', fileId: 'abc' },
+      },
+      attempts: 1,
+    });
+    expect(payload).not.toHaveProperty('warning');
+  });
+});
+
 describe('normalizeSendCommandError', () => {
   it('passes through SendCommandError as-is', () => {
     const details = { type: 'validation', method: 'sendPhoto', message: 'bad', attempt: 1, retries: 0 };

@@ -316,6 +316,26 @@ describe('executeSendWithRetries', () => {
     expect(sendFn).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(100);
   });
+
+  it('clamps sleep duration to remaining timeout budget', async () => {
+    let currentTime = 0;
+    const now = vi.fn(() => currentTime);
+    const sleep = vi.fn(async (ms) => { currentTime += ms - 1; });
+    const sendFn = vi.fn()
+      .mockImplementationOnce(async () => { currentTime += 80; throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }); })
+      .mockResolvedValueOnce({ messageId: 1 });
+
+    await executeSendWithRetries(sendFn, {
+      method: 'sendPhoto',
+      retries: 2,
+      retryBackoff: parseRetryBackoff('500'),
+      timeoutMs: 200,
+      sleep,
+      now,
+    });
+
+    expect(sleep).toHaveBeenCalledWith(120);
+  });
 });
 
 describe('send payload builders', () => {
