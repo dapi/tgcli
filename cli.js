@@ -1587,7 +1587,7 @@ async function runSync(globalFlags, options = {}) {
     const follow = options.follow || !options.once;
 
     try {
-      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+      if (!(await telegramClient.isAuthorized().catch((err) => { process.stderr.write(`Auth check failed: ${err.message}\n`); return false; }))) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
 
@@ -2938,7 +2938,7 @@ async function runSendPhoto(globalFlags, options = {}) {
       const release = acquireStoreLock(storeDir);
       const { telegramClient, messageSyncService } = createServices({ storeDir });
       try {
-        if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        if (!(await telegramClient.isAuthorized().catch((err) => { process.stderr.write(`Auth check failed: ${err.message}\n`); return false; }))) {
           throw new Error('Not authenticated. Run `node cli.js auth` first.');
         }
         const topicId = parsePositiveInt(options.topic, '--topic');

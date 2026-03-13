@@ -147,15 +147,21 @@ tgcli send text --to @username --message "Hello world"
 
 ### send photo
 
-Send a local PNG/JPG as a Telegram photo preview with optional retries for transient transport failures.
+Send a local image as a Telegram photo preview with optional retries for transient transport failures.
 
 | Flag | Description |
 |-|-|
 | `--to` | Recipient: `@username`, phone number, or chat ID |
-| `--photo` | Local PNG/JPG path |
+| `--photo` | Local image path |
 | `--caption` | Optional caption |
 | `--parse-mode` | `markdown`, `html`, or `none` for caption text |
 | `--reply-to` | Message ID to reply to |
+| `--topic` | Forum topic ID |
+| `--silent` | Send without notification |
+| `--no-forwards` | Prevent forwarding |
+| `--caption-above` | Place caption above photo |
+| `--spoiler` | Mark photo as spoiler |
+| `--schedule` | Schedule send (e.g. `2025-01-01T12:00:00`) |
 | `--retries` | Retry count for transient network/transport failures (default: `2`) |
 | `--retry-backoff` | Backoff in milliseconds or strategy: `constant`, `linear`, `exponential` |
 

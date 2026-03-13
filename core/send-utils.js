@@ -283,7 +283,11 @@ export async function executeSendWithRetries(sendFn, options = {}) {
       }
 
       if (typeof options.onRetry === 'function') {
-        options.onRetry(details);
+        try {
+          options.onRetry(details);
+        } catch {
+          // onRetry callback failure must not break the retry loop
+        }
       }
 
       const retryDelayMs = getRetryDelayMs(backoff, attempt);

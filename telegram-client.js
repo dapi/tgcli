@@ -1173,6 +1173,7 @@ class TelegramClient {
       }
     } catch (error) {
       // file_id enrichment is best-effort and must not flip a successful send into failure
+      console.error(`[sendPhoto] getMessages enrichment failed for peer ${prepared.peerRef}, message ${messageId}: ${error.message}`);
     }
     return {
       chatId,
