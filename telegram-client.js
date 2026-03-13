@@ -1377,10 +1377,24 @@ class TelegramClient {
     return this.client.findFolder({ title: trimmed });
   }
 
-  async showFolder(idOrName) {
+  async showFolder(idOrName, options = {}) {
     await this.ensureLogin();
     const folder = await this.findFolder(idOrName);
     if (!folder) throw new Error(`Folder not found: ${idOrName}`);
+
+    const normalizePeers = (peers) => (peers ?? []).map((p) => this._normalizePeer(p));
+
+    const resolvePeers = async (peers) => {
+      const normalized = normalizePeers(peers);
+      if (!options.resolve) return normalized;
+
+      return Promise.all(normalized.map(async (peer) => {
+        const name = await this._resolvePeerName(peer.type, peer.id);
+        const nameField = peer.type === 'user' ? 'name' : 'title';
+        return { ...peer, [nameField]: name ?? '(unresolved)' };
+      }));
+    };
+
     return {
       id: folder.id,
       title: typeof folder.title === 'string' ? folder.title : (folder.title?.text ?? 'Unknown'),
@@ -1395,9 +1409,9 @@ class TelegramClient {
       excludeMuted: folder.excludeMuted ?? false,
       excludeRead: folder.excludeRead ?? false,
       excludeArchived: folder.excludeArchived ?? false,
-      includePeers: folder.includePeers ?? [],
-      excludePeers: folder.excludePeers ?? [],
-      pinnedPeers: folder.pinnedPeers ?? [],
+      includePeers: await resolvePeers(folder.includePeers),
+      excludePeers: await resolvePeers(folder.excludePeers),
+      pinnedPeers: await resolvePeers(folder.pinnedPeers),
     };
   }
 

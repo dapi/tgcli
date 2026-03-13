@@ -160,7 +160,7 @@ describe('showFolder', () => {
     });
     const result = await tc.showFolder('1');
     expect(result).toMatchObject({ id: 1, title: 'Work', type: 'filter', contacts: true });
-    expect(result.includePeers).toEqual([{ userId: 123 }]);
+    expect(result.includePeers).toEqual([{ type: 'user', id: 123 }]);
   });
 
   it('returns type=default for dialogFilterDefault', async () => {
@@ -652,6 +652,68 @@ describe('joinChatlist', () => {
 
   it('rejects path traversal in slug', async () => {
     await expect(tc.joinChatlist('https://t.me/addlist/abc/../../evil')).rejects.toThrow('Invalid chatlist link');
+  });
+});
+
+describe('showFolder - peer normalization', () => {
+  let tc;
+  beforeEach(() => { tc = createMockClient(); });
+
+  it('normalizes peers by default (no resolve)', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, title: 'AI', _: 'dialogFilter',
+      includePeers: [{ channelId: 1951583351 }, { userId: 272066824 }],
+      excludePeers: [{ chatId: 555 }],
+      pinnedPeers: [],
+    });
+    const result = await tc.showFolder('1');
+    expect(result.includePeers).toEqual([
+      { type: 'channel', id: 1951583351 },
+      { type: 'user', id: 272066824 },
+    ]);
+    expect(result.excludePeers).toEqual([{ type: 'chat', id: 555 }]);
+    expect(result.pinnedPeers).toEqual([]);
+  });
+
+  it('resolves peer names with resolve=true', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, title: 'AI', _: 'dialogFilter',
+      includePeers: [{ channelId: 1951583351 }, { userId: 272066824 }],
+      excludePeers: [], pinnedPeers: [],
+    });
+    tc.client.getChat.mockResolvedValue({ displayName: 'ИИшница' });
+    tc.client.getFullUser.mockResolvedValue({ displayName: 'Иван Иванов' });
+
+    const result = await tc.showFolder('1', { resolve: true });
+    expect(result.includePeers).toEqual([
+      { type: 'channel', id: 1951583351, title: 'ИИшница' },
+      { type: 'user', id: 272066824, name: 'Иван Иванов' },
+    ]);
+  });
+
+  it('marks unresolved peers with (unresolved)', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, title: 'AI', _: 'dialogFilter',
+      includePeers: [{ channelId: 999 }],
+      excludePeers: [], pinnedPeers: [],
+    });
+    tc.client.getChat.mockRejectedValue(new Error('PEER_NOT_FOUND'));
+
+    const result = await tc.showFolder('1', { resolve: true });
+    expect(result.includePeers).toEqual([
+      { type: 'channel', id: 999, title: '(unresolved)' },
+    ]);
+  });
+
+  it('handles empty peer arrays', async () => {
+    tc.client.findFolder.mockResolvedValue({
+      id: 1, title: 'AI', _: 'dialogFilter',
+      includePeers: [], excludePeers: null, pinnedPeers: undefined,
+    });
+    const result = await tc.showFolder('1');
+    expect(result.includePeers).toEqual([]);
+    expect(result.excludePeers).toEqual([]);
+    expect(result.pinnedPeers).toEqual([]);
   });
 });
 
