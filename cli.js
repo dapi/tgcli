@@ -430,7 +430,8 @@ function buildProgram() {
     .command('show')
     .description('Show folder details')
     .argument('<folder>', 'Folder ID or title')
-    .action(withGlobalOptions((globalFlags, folder) => runFoldersShow(globalFlags, folder)));
+    .option('--resolve', 'Resolve peer IDs to names (slower, requires API calls)')
+    .action(withGlobalOptions((globalFlags, folder, opts) => runFoldersShow(globalFlags, folder, opts)));
   folders
     .command('create')
     .description('Create a new folder')
@@ -3728,7 +3729,7 @@ async function runFoldersList(globalFlags) {
   }, timeoutMs);
 }
 
-async function runFoldersShow(globalFlags, folder) {
+async function runFoldersShow(globalFlags, folder, opts = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -3738,7 +3739,7 @@ async function runFoldersShow(globalFlags, folder) {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
-      const info = await telegramClient.showFolder(folder);
+      const info = await telegramClient.showFolder(folder, { resolve: opts.resolve });
       if (globalFlags.json) {
         writeJson(info);
       } else {
@@ -3748,9 +3749,42 @@ async function runFoldersShow(globalFlags, folder) {
         if (flags.length) console.log(`  includes: ${flags.join(', ')}`);
         const excludes = ['excludeMuted', 'excludeRead', 'excludeArchived'].filter((f) => info[f]);
         if (excludes.length) console.log(`  excludes: ${excludes.join(', ')}`);
-        if (info.includePeers?.length) console.log(`  peers: ${info.includePeers.length} included`);
-        if (info.excludePeers?.length) console.log(`  excluded peers: ${info.excludePeers.length}`);
-        if (info.pinnedPeers?.length) console.log(`  pinned peers: ${info.pinnedPeers.length}`);
+
+        if (opts.resolve) {
+          // Group peers by type and show with names
+          const printResolvedPeers = (peers, label) => {
+            if (!peers?.length) return;
+            if (label) console.log(`  ${label}:`);
+            const indent = label ? '    ' : '  ';
+            const grouped = {};
+            for (const p of peers) {
+              const group = p.type + 's';
+              if (!grouped[group]) grouped[group] = [];
+              const displayName = p.name ?? p.title ?? '(unresolved)';
+              grouped[group].push(`${displayName} (${p.id})`);
+            }
+            for (const [group, items] of Object.entries(grouped)) {
+              console.log(`${indent}${group}:`);
+              for (const item of items) console.log(`${indent}  - ${item}`);
+            }
+          };
+          printResolvedPeers(info.includePeers);
+          printResolvedPeers(info.excludePeers, 'excluded');
+          printResolvedPeers(info.pinnedPeers, 'pinned');
+        } else {
+          // Show typed ID list
+          const printPeers = (peers, label) => {
+            if (!peers?.length) {
+              console.log(`  ${label}: (none)`);
+              return;
+            }
+            console.log(`  ${label}:`);
+            for (const p of peers) console.log(`    - ${p.type}:${p.id}`);
+          };
+          printPeers(info.includePeers, 'includePeers');
+          printPeers(info.excludePeers, 'excludePeers');
+          printPeers(info.pinnedPeers, 'pinnedPeers');
+        }
       }
     } finally {
       await messageSyncService.shutdown();
