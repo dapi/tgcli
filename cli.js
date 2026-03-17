@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 import readline from 'readline';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 
 import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
@@ -234,7 +234,9 @@ function buildProgram() {
     .command('text')
     .description('Send a text message')
     .option('--to <id|username>', 'Recipient id or username')
+    .addOption(new Option('--chat <id|username>', 'Alias for --to').hideHelp())
     .option('--message <text>', 'Message text')
+    .addOption(new Option('--text <text>', 'Alias for --message').hideHelp())
     .option('--parse-mode <mode>', 'Parse mode: markdown|html|none')
     .option('--topic <id>', 'Forum topic id')
     .option('--reply-to <id>', 'Reply to message id')
@@ -248,6 +250,7 @@ function buildProgram() {
     .command('photo')
     .description('Send a photo with preview')
     .option('--to <id|username>', 'Recipient id or username')
+    .addOption(new Option('--chat <id|username>', 'Alias for --to').hideHelp())
     .option('--photo <path>', 'Photo path')
     .option('--caption <text>', 'Optional caption')
     .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
@@ -265,6 +268,7 @@ function buildProgram() {
     .command('file')
     .description('Send a file')
     .option('--to <id|username>', 'Recipient id or username')
+    .addOption(new Option('--chat <id|username>', 'Alias for --to').hideHelp())
     .option('--file <path>', 'File path')
     .option('--caption <text>', 'Optional caption')
     .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
@@ -1085,6 +1089,11 @@ function parseScheduleDate(value) {
     throw new Error('--schedule must be within 365 days from now');
   }
   return Math.floor(date.getTime() / 1000);
+}
+
+function resolveSendAliases(options) {
+  if (!options.to && options.chat) options.to = options.chat;
+  if (!options.message && options.text) options.message = options.text;
 }
 
 function parsePositiveInt(value, label) {
@@ -2860,6 +2869,7 @@ async function runMessagesContext(globalFlags, options = {}) {
 }
 
 async function runSendText(globalFlags, options = {}) {
+  resolveSendAliases(options);
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     if (!options.to) {
@@ -2912,6 +2922,7 @@ async function runSendText(globalFlags, options = {}) {
 }
 
 async function runSendPhoto(globalFlags, options = {}) {
+  resolveSendAliases(options);
   const timeoutMs = globalFlags.timeoutMs;
   const method = 'sendPhoto';
   let retries = DEFAULT_SEND_PHOTO_RETRIES;
@@ -2994,6 +3005,7 @@ function buildSendPhotoSuccessPayload({ method, inputChatId, result, attempts })
 }
 
 async function runSendFile(globalFlags, options = {}) {
+  resolveSendAliases(options);
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     if (!options.to) {

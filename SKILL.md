@@ -110,7 +110,7 @@ Both positional query and `--query` flag work. `--chat` accepts multiple values.
 
 ### Send Text/Photo/File
 
-**⚠ `send` uses `--to` for the destination; then `--message` for text, `--photo` for photo uploads, and `--file` for generic files.**
+**⚠ `send` uses `--to` (alias `--chat`) for the destination; then `--message` (alias `--text`) for text body, `--photo` for photo uploads, and `--file` for generic files.**
 
 ```bash
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
