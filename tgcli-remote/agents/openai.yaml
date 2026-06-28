@@ -1,0 +1,4 @@
+interface:
+  display_name: "TGCLI Remote"
+  short_description: "Use tgcli over SSH on a remote server"
+  default_prompt: "Use this skill when a task should run tgcli on a remote VPS over SSH, with the server address taken from TGCLI_SERVER."
