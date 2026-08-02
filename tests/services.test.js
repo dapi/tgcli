@@ -35,6 +35,7 @@ describe('core services helpers', () => {
       apiId: '12345',
       apiHash: 'hash-value',
       phoneNumber: '+1234567890',
+      proxy: 'socks5://127.0.0.1:1080',
     }));
     telegramClientCtor.mockClear();
     messageSyncServiceCtor.mockClear();
@@ -57,7 +58,12 @@ describe('core services helpers', () => {
       'hash-value',
       '+1234567890',
       path.join(storeDir, 'session.json'),
-      { forceSms: true, useQr: true, disableUpdates: true },
+      {
+        forceSms: true,
+        useQr: true,
+        disableUpdates: true,
+        proxy: 'socks5://127.0.0.1:1080',
+      },
     );
     expect(messageSyncServiceCtor).not.toHaveBeenCalled();
     expect(result.sessionPath).toBe(path.join(storeDir, 'session.json'));

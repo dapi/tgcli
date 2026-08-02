@@ -268,6 +268,10 @@ tgcli config list --json --timeout 30s
 tgcli config get <key> --json --timeout 30s
 tgcli config set <key> <value> --json --timeout 30s
 tgcli config unset <key> --json --timeout 30s
+# Route Telegram traffic through a local SOCKS5 tunnel
+tgcli config set proxy socks5://127.0.0.1:1080 --json --timeout 30s
+# Remove the configured proxy
+tgcli config unset proxy --json --timeout 30s
 tgcli doctor --json --timeout 30s
 tgcli doctor --connect --json --timeout 30s
 ```

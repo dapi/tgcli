@@ -33,6 +33,7 @@ const CONFIG_SPECS = [
   { key: 'apiId', path: ['apiId'], type: 'number' },
   { key: 'apiHash', path: ['apiHash'], type: 'string', secret: true },
   { key: 'phoneNumber', path: ['phoneNumber'], type: 'string' },
+  { key: 'proxy', path: ['proxy'], type: 'string', secret: true },
   { key: 'mcp.enabled', path: ['mcp', 'enabled'], type: 'boolean' },
   { key: 'mcp.host', path: ['mcp', 'host'], type: 'string' },
   { key: 'mcp.port', path: ['mcp', 'port'], type: 'number' },

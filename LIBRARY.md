@@ -54,13 +54,16 @@ node client.js
 #### Constructor
 
 ```javascript
-const client = new TelegramClient(apiId, apiHash, phoneNumber, sessionPath);
+const client = new TelegramClient(apiId, apiHash, phoneNumber, sessionPath, {
+  proxy: 'socks5://127.0.0.1:1080',
+});
 ```
 
 - `apiId`: Your Telegram API ID
 - `apiHash`: Your Telegram API Hash
 - `phoneNumber`: Your phone number in international format
 - `sessionPath`: (Optional) Path to save the session file (default uses the tgcli store)
+- `options.proxy`: (Optional) SOCKS5, HTTP, or MTProto proxy URL
 
 #### Methods
 

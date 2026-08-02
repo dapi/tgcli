@@ -54,6 +54,7 @@ export function createTelegramClient(options = {}) {
       forceSms: options.forceSms ?? false,
       useQr: options.useQr ?? false,
       disableUpdates: options.disableUpdates ?? false,
+      proxy: config.proxy || undefined,
     },
   );
 

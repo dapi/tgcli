@@ -195,6 +195,25 @@ tgcli config set mcp.port 8080
 
 Then run `tgcli server` and point your client at the configured address.
 
+### Telegram proxy
+
+Telegram traffic can be routed through a SOCKS5, HTTP, or MTProto proxy. The
+setting applies to authentication, live requests, and background sync:
+
+```bash
+# Existing SSH SOCKS5 tunnel through voldar
+tgcli config set proxy socks5://127.0.0.1:1080
+
+# Remove the proxy and connect directly again
+tgcli config unset proxy
+```
+
+Supported URL formats include `socks5://host:port`,
+`socks5://user:password@host:port`, `http://host:port`, and Telegram MTProto
+proxy URLs such as `https://t.me/proxy?server=...&port=443&secret=...`.
+
+The proxy is optional; when it is unset, tgcli connects directly to Telegram.
+
 ## Configuration & Store
 
 The tgcli store lives in the OS app-data directory and contains `config.json`, sessions, and `messages.db`.

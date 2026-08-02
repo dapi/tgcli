@@ -1,4 +1,9 @@
-import { TelegramClient as MtCuteClient } from '@mtcute/node';
+import {
+  HttpProxyTcpTransport,
+  MtProxyTcpTransport,
+  SocksProxyTcpTransport,
+  TelegramClient as MtCuteClient,
+} from '@mtcute/node';
 import { InputMedia } from '@mtcute/core';
 import { randomLong } from '@mtcute/core/utils.js';
 import { html } from '@mtcute/html-parser';
@@ -308,6 +313,68 @@ function coerceApiId(value) {
   throw new Error('TELEGRAM_API_ID must be a number');
 }
 
+function createProxyTransport(proxyUrl) {
+  let url;
+  try {
+    url = new URL(proxyUrl);
+  } catch {
+    throw new Error(`Invalid Telegram proxy URL: ${proxyUrl}`);
+  }
+
+  const host = url.hostname;
+  const port = Number(url.port);
+
+  if (url.protocol === 'socks5:' || url.protocol === 'socks4:') {
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Telegram proxy URL must include a valid host and port: ${proxyUrl}`);
+    }
+    return new SocksProxyTcpTransport({
+      host,
+      port,
+      user: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      version: url.protocol === 'socks4:' ? 4 : 5,
+    });
+  }
+
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    const isTelegramMtProxy = url.hostname === 't.me'
+      && (url.pathname === '/proxy' || url.pathname === '/socks');
+    if (isTelegramMtProxy || url.searchParams.has('secret')) {
+      const secret = url.searchParams.get('secret');
+      const server = url.searchParams.get('server');
+      const proxyPort = Number(url.searchParams.get('port'));
+      if (!server || !secret || !Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
+        throw new Error(`Invalid Telegram MTProto proxy URL: ${proxyUrl}`);
+      }
+      return new MtProxyTcpTransport({ host: server, port: proxyPort, secret });
+    }
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Telegram proxy URL must include a valid host and port: ${proxyUrl}`);
+    }
+    return new HttpProxyTcpTransport({
+      host,
+      port,
+      user: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      tls: url.protocol === 'https:',
+    });
+  }
+
+  if (url.protocol === 'mtproto:') {
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Telegram proxy URL must include a valid host and port: ${proxyUrl}`);
+    }
+    const secret = url.searchParams.get('secret');
+    if (!secret) {
+      throw new Error(`Invalid Telegram MTProto proxy URL: ${proxyUrl}`);
+    }
+    return new MtProxyTcpTransport({ host, port, secret });
+  }
+
+  throw new Error(`Unsupported Telegram proxy protocol: ${url.protocol}`);
+}
+
 function normalizePeerType(peer) {
   if (!peer) return 'chat';
   if (peer.type === 'user' || peer.type === 'bot') return 'user';
@@ -567,6 +634,9 @@ class TelegramClient {
       storage: this.sessionPath,
       platform: createPlatform(),
     };
+    if (this.options.proxy) {
+      clientOptions.transport = createProxyTransport(this.options.proxy);
+    }
     if (this.options.disableUpdates) {
       clientOptions.disableUpdates = true;
     } else {
