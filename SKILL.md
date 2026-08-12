@@ -79,6 +79,14 @@ tgcli auth
   - Code block: triple backticks
   - Telegram markdown differs from standard Markdown — always use double markers
 - Never delete lock files (`LOCK`, `database is locked`): wait and retry.
+- For multiline text or arbitrary user-authored text, use `scripts/send_text.py` and
+  pass the body through stdin. It invokes `tgcli` without a shell, preserving real
+  line breaks and punctuation exactly.
+- Never construct a shell command with `JSON.stringify(message)` and never put
+  literal `\\n` sequences in `--message`: Telegram will display the backslash and
+  the letter `n` instead of a line break.
+- After sending multiline text, read the message back and verify that `text`
+  contains real newline characters, not literal `\\n` sequences.
 
 ## Core Command Patterns
 
@@ -111,6 +119,21 @@ Both positional query and `--query` flag work. `--chat` accepts multiple values.
 ### Send Text/Photo/File
 
 **⚠ `send` uses `--to` (alias `--chat`) for the destination; then `--message` (alias `--text`) for text body, `--photo` for photo uploads, and `--file` for generic files.**
+
+For multiline text, use the stdin helper with a single-quoted heredoc delimiter:
+
+```bash
+python3 ~/.agents/skills/tgcli/scripts/send_text.py --to <id|@username> <<'TGCLI_MESSAGE'
+Первая строка.
+
+1. Первый пункт.
+2. Второй пункт.
+TGCLI_MESSAGE
+```
+
+The quoted delimiter prevents shell expansion, while stdin preserves actual line
+breaks. Direct `tgcli send text --message "..."` remains suitable for short,
+static, single-line messages.
 
 ```bash
 tgcli send text --to <id|@username> --message "Hello" --json --timeout 30s
