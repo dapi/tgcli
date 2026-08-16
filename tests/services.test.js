@@ -95,4 +95,33 @@ describe('core services helpers', () => {
     expect(result.sessionPath).toBe(path.join(storeDir, 'session.json'));
     expect(result.dbPath).toBe(path.join(storeDir, 'messages.db'));
   });
+
+  it('TELEGRAM_PROXY env var overrides proxy from config.json', () => {
+    process.env.TELEGRAM_PROXY = 'mtproto://proxy.example.com:20123?secret=aabbcc';
+    try {
+      createTelegramClient({ storeDir, disableUpdates: true });
+      expect(telegramClientCtor.mock.calls[0][4]).toMatchObject({
+        proxy: 'mtproto://proxy.example.com:20123?secret=aabbcc',
+      });
+    } finally {
+      delete process.env.TELEGRAM_PROXY;
+    }
+  });
+
+  it('TELEGRAM_PROXY env var is used when config.json has no proxy', () => {
+    fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+      apiId: '12345',
+      apiHash: 'hash-value',
+      phoneNumber: '+1234567890',
+    }));
+    process.env.TELEGRAM_PROXY = 'socks5://127.0.0.1:9050';
+    try {
+      createTelegramClient({ storeDir, disableUpdates: true });
+      expect(telegramClientCtor.mock.calls[0][4]).toMatchObject({
+        proxy: 'socks5://127.0.0.1:9050',
+      });
+    } finally {
+      delete process.env.TELEGRAM_PROXY;
+    }
+  });
 });

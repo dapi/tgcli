@@ -41,7 +41,7 @@ export function normalizeConfig(raw = {}) {
   const apiId = normalizeValue(raw.apiId ?? raw.api_id ?? raw.apiID);
   const apiHash = normalizeValue(raw.apiHash ?? raw.api_hash);
   const phoneNumber = normalizeValue(raw.phoneNumber ?? raw.phone ?? raw.phone_number);
-  const proxy = normalizeValue(raw.proxy ?? raw.proxyUrl ?? raw.proxy_url);
+  const proxy = normalizeValue(process.env.TELEGRAM_PROXY ?? raw.proxy ?? raw.proxyUrl ?? raw.proxy_url);
   const mcpRaw = raw.mcp && typeof raw.mcp === 'object' ? raw.mcp : {};
   const mcpEnabled = normalizeBoolean(raw.mcpEnabled ?? raw.mcp_enabled ?? mcpRaw.enabled, false);
   const mcp = {

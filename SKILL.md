@@ -291,8 +291,12 @@ tgcli config list --json --timeout 30s
 tgcli config get <key> --json --timeout 30s
 tgcli config set <key> <value> --json --timeout 30s
 tgcli config unset <key> --json --timeout 30s
-# Route Telegram traffic through a local SOCKS5 tunnel
+# Route via SOCKS5 (stored in config.json)
 tgcli config set proxy socks5://127.0.0.1:1080 --json --timeout 30s
+# Route via MTProxy (Telegram t.me link format also accepted)
+tgcli config set proxy "https://t.me/proxy?server=HOST&port=PORT&secret=SECRET" --json --timeout 30s
+# Or via env variable (overrides config.json; put in dotfiles/envrc):
+# export TELEGRAM_PROXY="https://t.me/proxy?server=HOST&port=PORT&secret=SECRET"
 # Remove the configured proxy
 tgcli config unset proxy --json --timeout 30s
 tgcli doctor --json --timeout 30s
