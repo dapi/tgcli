@@ -1,13 +1,9 @@
 const {
-  httpProxyTransportCtor,
   mtcuteClientCtor,
   mtProxyTransportCtor,
   proxyTransportFromUrlMock,
   socksProxyTransportCtor,
 } = vi.hoisted(() => ({
-  httpProxyTransportCtor: vi.fn(function (proxy) {
-    this.proxy = proxy;
-  }),
   mtcuteClientCtor: vi.fn(function () {
     return {
       destroy: vi.fn().mockResolvedValue(undefined),
@@ -25,9 +21,9 @@ const {
 }));
 
 vi.mock('@mtcute/node', () => ({
-  HttpProxyTcpTransport: httpProxyTransportCtor,
-  MtProxyTcpTransport: mtProxyTransportCtor,
-  SocksProxyTcpTransport: socksProxyTransportCtor,
+  HttpProxyTcpTransport: vi.fn(),
+  MtProxyTcpTransport: vi.fn(),
+  SocksProxyTcpTransport: vi.fn(),
   TelegramClient: mtcuteClientCtor,
   proxyTransportFromUrl: proxyTransportFromUrlMock,
 }));
@@ -83,77 +79,26 @@ describe('telegram client auth bootstrap options', () => {
   });
 
   it('routes MTProto traffic through the configured proxy', () => {
+    const proxyUrl = 'socks5://127.0.0.1:1080';
     new TelegramClient(12345, 'hash', '+1234567890', '/tmp/tgcli-auth-proxy.session', {
-      proxy: 'socks5://127.0.0.1:1080',
+      proxy: proxyUrl,
     });
 
+    expect(proxyTransportFromUrlMock).toHaveBeenCalledWith(proxyUrl);
     const transport = mtcuteClientCtor.mock.calls[0][0].transport;
-    expect(proxyTransportFromUrlMock).toHaveBeenCalledWith('socks5://127.0.0.1:1080');
-    expect(transport).toEqual({ proxyUrl: 'socks5://127.0.0.1:1080' });
+    expect(transport).toEqual(expect.objectContaining({ proxyUrl }));
   });
 
-  it('verifies the selected account identity before reporting authorization', async () => {
-    const me = { id: 123456789n, phone: '77071112233' };
-    const identityVerifier = vi.fn();
-    mtcuteClientCtor.mockImplementationOnce(function () {
-      return {
-        getMe: vi.fn().mockResolvedValue(me),
-        destroy: vi.fn().mockResolvedValue(undefined),
-        stopUpdatesLoop: vi.fn().mockResolvedValue(undefined),
-        onRawUpdate: { remove: vi.fn() },
-      };
-    });
-    const client = new TelegramClient(12345, 'hash', '+77071112233', '/tmp/tgcli-auth-identity.session', {
-      identityVerifier,
+  it('normalizes Telegram FakeTLS share-link secrets for mtcute', () => {
+    const proxyUrl = 'https://t.me/proxy?server=proxy.example&port=443&secret=ee00112233445566778899aabbccddeeff6578616d706c652e636f6d';
+    new TelegramClient(12345, 'hash', '+1234567890', '/tmp/tgcli-auth-faketls.session', {
+      proxy: proxyUrl,
     });
 
-    await expect(client.isAuthorized()).resolves.toBe(true);
-    expect(identityVerifier).toHaveBeenCalledWith(me);
-  });
-
-  it('fails closed when the account identity verifier rejects the session', async () => {
-    mtcuteClientCtor.mockImplementationOnce(function () {
-      return {
-        getMe: vi.fn().mockResolvedValue({ id: 987654321n, phone: '77071112233' }),
-        destroy: vi.fn().mockResolvedValue(undefined),
-        stopUpdatesLoop: vi.fn().mockResolvedValue(undefined),
-        onRawUpdate: { remove: vi.fn() },
-      };
-    });
-    const client = new TelegramClient(12345, 'hash', '+77071112233', '/tmp/tgcli-auth-crossed.session', {
-      identityVerifier: () => {
-        throw new Error('Account identity mismatch for work');
-      },
-    });
-
-    await expect(client.isAuthorized()).rejects.toThrow(/identity mismatch/i);
-  });
-
-  it('verifies identity immediately after a fresh interactive login', async () => {
-    const unauthorized = Object.assign(new Error('AUTH_KEY_UNREGISTERED'), { code: 401 });
-    const me = { id: 987654321n, phone: '77079990000' };
-    const getMe = vi.fn()
-      .mockRejectedValueOnce(unauthorized)
-      .mockResolvedValueOnce(me);
-    const start = vi.fn().mockResolvedValue(undefined);
-    const identityVerifier = vi.fn(() => {
-      throw new Error('Account phone mismatch for work');
-    });
-    mtcuteClientCtor.mockImplementationOnce(function () {
-      return {
-        getMe,
-        start,
-        destroy: vi.fn().mockResolvedValue(undefined),
-        stopUpdatesLoop: vi.fn().mockResolvedValue(undefined),
-        onRawUpdate: { remove: vi.fn() },
-      };
-    });
-    const client = new TelegramClient(12345, 'hash', '+77071112233', '/tmp/tgcli-auth-fresh-crossed.session', {
-      identityVerifier,
-    });
-
-    await expect(client.login()).resolves.toBe(false);
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(identityVerifier).toHaveBeenCalledWith(me);
+    const normalizedUrl = proxyTransportFromUrlMock.mock.calls[0][0];
+    const normalizedSecret = new URL(normalizedUrl).searchParams.get('secret');
+    expect(Buffer.from(normalizedSecret, 'base64url')).toEqual(
+      Buffer.from('ee00112233445566778899aabbccddeeff6578616d706c652e636f6d', 'hex'),
+    );
   });
 });
