@@ -635,7 +635,8 @@ class TelegramClient {
       platform: createPlatform(),
     };
     if (this.options.proxy) {
-      clientOptions.transport = createProxyTransport(this.options.proxy);
+      const proxyUrl = this.options.proxy;
+      clientOptions.transport = () => createProxyTransport(proxyUrl);
     }
     if (this.options.disableUpdates) {
       clientOptions.disableUpdates = true;

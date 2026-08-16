@@ -83,6 +83,11 @@ describe('telegram client auth bootstrap options', () => {
       proxy: 'socks5://127.0.0.1:1080',
     });
 
+    const transportFactory = mtcuteClientCtor.mock.calls[0][0].transport;
+    expect(typeof transportFactory).toBe('function');
+
+    // Invoke the factory — this is what mtcute does per-DC-connection.
+    const transport = transportFactory();
     expect(socksProxyTransportCtor).toHaveBeenCalledWith({
       host: '127.0.0.1',
       port: 1080,
@@ -90,10 +95,8 @@ describe('telegram client auth bootstrap options', () => {
       password: undefined,
       version: 5,
     });
-    expect(mtcuteClientCtor.mock.calls[0][0]).toEqual(expect.objectContaining({
-      transport: expect.objectContaining({
-        proxy: expect.objectContaining({ host: '127.0.0.1', port: 1080, version: 5 }),
-      }),
+    expect(transport).toEqual(expect.objectContaining({
+      proxy: expect.objectContaining({ host: '127.0.0.1', port: 1080, version: 5 }),
     }));
   });
 });
