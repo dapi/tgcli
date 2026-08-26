@@ -3,7 +3,7 @@ name: tgcli
 description: >
   Use when user wants to read/search/send/analyze Telegram messages via tgcli CLI.
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
-  contacts, groups, tags, media downloads, and archive/sync status.
+  contacts, groups, tags, media downloads, multi-account profiles, and archive/sync status.
   Also covers group admin (join requests, rename, members, invite links, join/leave).
   For edit/delete/reactions/inline buttons, use telegram-mcp instead.
 ---
@@ -56,6 +56,10 @@ tgcli auth
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
 - If command shape is uncertain, verify it first with `tgcli <command> --help` instead of guessing flags.
+- Select named accounts with the global `--account <id|alias|phone>` option before the command, or with `TGCLI_ACCOUNT`. Selection precedence is `--account` → `TGCLI_ACCOUNT` → `default`.
+- The `default` profile keeps the legacy store and existing authorization. Never run `auth logout`, move a session, or copy session files merely because a named profile is not visible.
+- Named profiles have physically isolated config, session, messages database, locks, downloads, sync jobs, and service state. Always use the same account selector for auth, reads, writes, sync, and service commands belonging to that profile.
+- If account commands unexpectedly show no profiles or report missing configuration, inspect `TGCLI_STORE`: an inherited temporary/test store can hide the production profile registry. Resolve the intended base store before considering any auth change.
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send photo` and `send file`, `--parse-mode` requires `--caption`
@@ -89,6 +93,35 @@ tgcli auth
   contains real newline characters, not literal `\\n` sequences.
 
 ## Core Command Patterns
+
+### Accounts
+
+```bash
+# Existing commands without a selector continue to use the default profile.
+tgcli auth status --json --timeout 30s
+
+# Register an isolated profile without contacting Telegram.
+tgcli accounts add work --phone "+7 707 111 22 33" --alias office
+tgcli accounts list --json
+
+# Authenticate and use exactly one named profile.
+tgcli --account work auth
+tgcli --account office auth status --json --timeout 30s
+tgcli --account +770****2233 messages search "invoice" --source live --json --timeout 30s
+
+# Environment selection is useful for a dedicated service/process.
+TGCLI_ACCOUNT=work tgcli sync --follow
+```
+
+Account selectors resolve by stable profile ID, normalized phone number, or
+alias. If selection is ambiguous or the stored Telegram user ID does not match
+the session, stop and inspect the profile; never fall back to another account.
+
+For login codes delivered in-app, read Telegram's official service chat `777000`
+through the same already-authorized target profile. Codes may be localized, for
+example `Код для входа в Telegram:` or `Login code:`. Filter by the authorization
+request timestamp and pass the code over stdin rather than putting it in command
+arguments or logs.
 
 ### Read
 
