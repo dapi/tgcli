@@ -9,6 +9,13 @@ import readline from 'readline';
 import { Command, Option } from 'commander';
 
 import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
+import {
+  addAccount,
+  bindAccountIdentity,
+  listAccounts,
+  normalizePhoneNumber,
+  resolveAccountContext,
+} from './core/accounts.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
 import {
@@ -20,13 +27,12 @@ import {
   parseRetryBackoff,
   SendCommandError,
 } from './core/send-utils.js';
+import { parseLaunchdList, resolveServiceIdentity } from './core/service-identity.js';
 import { resolveStoreDir } from './core/store.js';
 import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
-const LAUNCHD_LABEL = 'com.dapi.tgcli';
-const SYSTEMD_SERVICE_NAME = 'tgcli';
 const AUTH_SYNC_HINT = 'Run `tgcli sync --once` or `tgcli sync --follow` when you need archive data.';
 const DEFAULT_SEND_PHOTO_RETRIES = 2;
 const CONFIG_SPECS = [
@@ -48,6 +54,7 @@ function buildProgram() {
     .name('tgcli')
     .description('Telegram CLI + MCP server')
     .usage('[options] <command>')
+    .option('--account <id|alias|phone>', 'Telegram account profile')
     .option('--json', 'Machine-readable output')
     .option('--timeout <duration>', 'Wall-clock timeout (e.g. 30s, 5m)')
     .version(readVersion(), '--version', 'Print version and exit')
@@ -91,6 +98,19 @@ function buildProgram() {
     .description('Unset a config value')
     .argument('<key>', 'Config key')
     .action(withGlobalOptions((globalFlags, key) => runConfigUnset(globalFlags, key)));
+
+  const accounts = program.command('accounts').description('Manage isolated Telegram account profiles');
+  accounts
+    .command('list')
+    .description('List account profiles')
+    .action(withGlobalOptions((globalFlags) => runAccountsList(globalFlags)));
+  accounts
+    .command('add')
+    .description('Add an isolated account profile')
+    .argument('<id>', 'Stable account profile id')
+    .requiredOption('--phone <number>', 'Telegram phone number with country code')
+    .option('--alias <name>', 'Additional account selector', collectList)
+    .action(withGlobalOptions((globalFlags, id, options) => runAccountsAdd(globalFlags, id, options)));
 
   const sync = program.command('sync').description('Archive backfill and realtime sync');
   sync
@@ -578,7 +598,15 @@ function disableHelpCommand(command) {
 function getGlobalFlags(command) {
   const options = command.optsWithGlobals();
   const timeoutMs = options.timeout ? parseDuration(options.timeout) : null;
+  const baseStoreDir = resolveStoreDir();
+  const accountContext = resolveAccountContext({
+    baseStoreDir,
+    selector: options.account || process.env.TGCLI_ACCOUNT || 'default',
+  });
+  process.env.TGCLI_STORE = accountContext.storeDir;
   return {
+    account: accountContext,
+    baseStoreDir,
     json: Boolean(options.json),
     timeout: options.timeout ?? null,
     timeoutMs,
@@ -597,6 +625,44 @@ function withGlobalOptions(handler) {
       process.exitCode = 1;
     }
   };
+}
+
+async function runAccountsList(globalFlags) {
+  const accounts = listAccounts(globalFlags.baseStoreDir);
+  if (globalFlags.json) {
+    writeJson(accounts);
+    return;
+  }
+  if (accounts.length === 0) {
+    console.log('No additional account profiles configured.');
+    return;
+  }
+  for (const account of accounts) {
+    const aliases = account.aliases.length > 0 ? ` (${account.aliases.join(', ')})` : '';
+    console.log(`${account.id}: ${account.phoneNumber}${aliases}`);
+  }
+}
+
+async function runAccountsAdd(globalFlags, id, options = {}) {
+  const requestedPhone = normalizePhoneNumber(options.phone);
+  const { config: defaultConfig } = loadConfig(globalFlags.baseStoreDir);
+  const accountConfig = normalizeConfig(defaultConfig ?? {});
+  if (accountConfig.phoneNumber
+      && normalizePhoneNumber(accountConfig.phoneNumber) === requestedPhone) {
+    throw new Error(`Phone ${requestedPhone} already belongs to the default account.`);
+  }
+  const account = addAccount(globalFlags.baseStoreDir, {
+    id,
+    phoneNumber: requestedPhone,
+    aliases: options.alias ?? [],
+  });
+  accountConfig.phoneNumber = account.phoneNumber;
+  saveConfig(account.storeDir, accountConfig);
+  if (globalFlags.json) {
+    writeJson(account);
+    return;
+  }
+  console.log(`Added account ${account.id} (${account.phoneNumber}). Run \`tgcli --account ${account.id} auth\`.`);
 }
 
 function writeJson(payload) {
@@ -838,17 +904,17 @@ function readServiceState(storeDir) {
   }
 }
 
-function getLaunchdPaths() {
+function getLaunchdPaths(identity = resolveServiceIdentity()) {
   const baseDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
   return {
-    plistPath: path.join(baseDir, `${LAUNCHD_LABEL}.plist`),
-    logPath: path.join(os.homedir(), 'Library', 'Logs', 'tgcli.log'),
-    errorLogPath: path.join(os.homedir(), 'Library', 'Logs', 'tgcli.error.log'),
+    plistPath: path.join(baseDir, `${identity.launchdLabel}.plist`),
+    logPath: path.join(os.homedir(), 'Library', 'Logs', `${identity.logBasename}.log`),
+    errorLogPath: path.join(os.homedir(), 'Library', 'Logs', `${identity.logBasename}.error.log`),
   };
 }
 
-function getSystemdPath() {
-  return path.join(os.homedir(), '.config', 'systemd', 'user', `${SYSTEMD_SERVICE_NAME}.service`);
+function getSystemdPath(identity = resolveServiceIdentity()) {
+  return path.join(os.homedir(), '.config', 'systemd', 'user', `${identity.systemdServiceName}.service`);
 }
 
 function xmlEscape(value) {
@@ -860,7 +926,7 @@ function xmlEscape(value) {
     .replace(/'/g, '&apos;');
 }
 
-function buildLaunchdPlist({ nodePath, cliPath, envVars, logPath, errorLogPath }) {
+function buildLaunchdPlist({ label, nodePath, cliPath, envVars, logPath, errorLogPath }) {
   const envEntries = Object.entries(envVars || {})
     .map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(value)}</string>`)
     .join('\n');
@@ -874,7 +940,7 @@ function buildLaunchdPlist({ nodePath, cliPath, envVars, logPath, errorLogPath }
     '<plist version="1.0">',
     '<dict>',
     `  <key>Label</key>`,
-    `  <string>${LAUNCHD_LABEL}</string>`,
+    `  <string>${xmlEscape(label)}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
     `    <string>${xmlEscape(nodePath)}</string>`,
@@ -958,9 +1024,9 @@ function detectBrewService() {
   };
 }
 
-function resolveServiceManager() {
+function resolveServiceManager(accountId = 'default') {
   const brewInfo = detectBrewService();
-  if (brewInfo.available && brewInfo.installed && brewInfo.serviceAvailable) {
+  if (accountId === 'default' && brewInfo.available && brewInfo.installed && brewInfo.serviceAvailable) {
     return { manager: 'brew', brewInfo };
   }
   if (process.platform === 'darwin') {
@@ -1497,6 +1563,13 @@ async function runAuthLogin(globalFlags, options = {}) {
       if (!loginSuccess) {
         throw new Error('Failed to login to Telegram.');
       }
+      if (globalFlags.account?.id && globalFlags.account.id !== 'default') {
+        const me = await telegramClient.getCurrentUser();
+        if (!me) {
+          throw new Error(`Cannot bind account ${globalFlags.account.id}: Telegram identity is unavailable.`);
+        }
+        bindAccountIdentity(storeDir, me);
+      }
       if (options.follow) {
         let archiveError = null;
         try {
@@ -1708,7 +1781,8 @@ async function runServer(globalFlags) {
 async function runServiceInstall(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const { manager, brewInfo } = resolveServiceManager();
+    const identity = resolveServiceIdentity(globalFlags.account?.id);
+    const { manager, brewInfo } = resolveServiceManager(identity.accountId);
     const envVars = {
       TGCLI_SERVICE_MANAGER: manager,
     };
@@ -1733,9 +1807,10 @@ async function runServiceInstall(globalFlags) {
     }
 
     if (manager === 'launchd') {
-      const { plistPath, logPath, errorLogPath } = getLaunchdPaths();
+      const { plistPath, logPath, errorLogPath } = getLaunchdPaths(identity);
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
       const content = buildLaunchdPlist({
+        label: identity.launchdLabel,
         nodePath: process.execPath,
         cliPath: CLI_PATH,
         envVars,
@@ -1752,7 +1827,7 @@ async function runServiceInstall(globalFlags) {
     }
 
     if (manager === 'systemd') {
-      const servicePath = getSystemdPath();
+      const servicePath = getSystemdPath(identity);
       fs.mkdirSync(path.dirname(servicePath), { recursive: true });
       const content = buildSystemdService({
         nodePath: process.execPath,
@@ -1774,7 +1849,8 @@ async function runServiceInstall(globalFlags) {
 async function runServiceStart(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const { manager, brewInfo } = resolveServiceManager();
+    const identity = resolveServiceIdentity(globalFlags.account?.id);
+    const { manager, brewInfo } = resolveServiceManager(identity.accountId);
 
     if (manager === 'brew') {
       const result = runCommand('brew', ['services', 'start', 'tgcli'], { stdio: 'inherit' });
@@ -1795,7 +1871,7 @@ async function runServiceStart(globalFlags) {
     }
 
     if (manager === 'launchd') {
-      const { plistPath } = getLaunchdPaths();
+      const { plistPath } = getLaunchdPaths(identity);
       if (!fs.existsSync(plistPath)) {
         throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
       }
@@ -1813,11 +1889,11 @@ async function runServiceStart(globalFlags) {
     }
 
     if (manager === 'systemd') {
-      const servicePath = getSystemdPath();
+      const servicePath = getSystemdPath(identity);
       if (!fs.existsSync(servicePath)) {
         throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
       }
-      const result = runCommand('systemctl', ['--user', 'enable', '--now', SYSTEMD_SERVICE_NAME]);
+      const result = runCommand('systemctl', ['--user', 'enable', '--now', identity.systemdServiceName]);
       if (result.status !== 0) {
         throw new Error(result.stderr || 'Failed to start systemd service.');
       }
@@ -1833,7 +1909,8 @@ async function runServiceStart(globalFlags) {
 async function runServiceStop(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const { manager } = resolveServiceManager();
+    const identity = resolveServiceIdentity(globalFlags.account?.id);
+    const { manager } = resolveServiceManager(identity.accountId);
 
     if (manager === 'brew') {
       const result = runCommand('brew', ['services', 'stop', 'tgcli'], { stdio: 'inherit' });
@@ -1851,7 +1928,7 @@ async function runServiceStop(globalFlags) {
     }
 
     if (manager === 'launchd') {
-      const { plistPath } = getLaunchdPaths();
+      const { plistPath } = getLaunchdPaths(identity);
       if (!fs.existsSync(plistPath)) {
         throw new Error(`Service not installed. Run \`tgcli service install\` first.`);
       }
@@ -1869,7 +1946,7 @@ async function runServiceStop(globalFlags) {
     }
 
     if (manager === 'systemd') {
-      const result = runCommand('systemctl', ['--user', 'stop', SYSTEMD_SERVICE_NAME]);
+      const result = runCommand('systemctl', ['--user', 'stop', identity.systemdServiceName]);
       if (result.status !== 0) {
         throw new Error(result.stderr || 'Failed to stop systemd service.');
       }
@@ -1885,7 +1962,8 @@ async function runServiceStop(globalFlags) {
 async function runServiceStatus(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const { manager, brewInfo } = resolveServiceManager();
+    const identity = resolveServiceIdentity(globalFlags.account?.id);
+    const { manager, brewInfo } = resolveServiceManager(identity.accountId);
     const storeDir = resolveStoreDir();
     const serviceState = readServiceState(storeDir);
     const cliVersion = readVersion();
@@ -1902,25 +1980,21 @@ async function runServiceStatus(globalFlags) {
         running = brewInfo.serviceStatus === 'started';
       }
     } else if (manager === 'launchd') {
-      const { plistPath } = getLaunchdPaths();
+      const { plistPath } = getLaunchdPaths(identity);
       installed = fs.existsSync(plistPath);
       const list = runCommand('launchctl', ['list']);
       if (list.status === 0) {
-        const lines = list.stdout.split('\n');
-        for (const line of lines) {
-          if (!line.includes(LAUNCHD_LABEL)) continue;
-          const parts = line.trim().split(/\s+/);
-          const pidValue = parts[0];
-          pid = pidValue && pidValue !== '-' ? Number(pidValue) : null;
-          running = Boolean(pid);
-          statusLabel = running ? 'started' : 'stopped';
-          break;
+        const launchdStatus = parseLaunchdList(list.stdout, identity.launchdLabel);
+        if (launchdStatus) {
+          pid = launchdStatus.pid;
+          running = launchdStatus.running;
+          statusLabel = launchdStatus.status;
         }
       }
     } else if (manager === 'systemd') {
-      const servicePath = getSystemdPath();
+      const servicePath = getSystemdPath(identity);
       installed = fs.existsSync(servicePath);
-      const active = runCommand('systemctl', ['--user', 'is-active', SYSTEMD_SERVICE_NAME]);
+      const active = runCommand('systemctl', ['--user', 'is-active', identity.systemdServiceName]);
       running = active.status === 0 && active.stdout.trim() === 'active';
       statusLabel = active.stdout.trim();
     } else {
@@ -1980,7 +2054,8 @@ async function runServiceStatus(globalFlags) {
 async function runServiceLogs(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
-    const { manager } = resolveServiceManager();
+    const identity = resolveServiceIdentity(globalFlags.account?.id);
+    const { manager } = resolveServiceManager(identity.accountId);
 
     if (manager === 'brew') {
       const info = runCommand('brew', ['services', 'info', 'tgcli']);
@@ -2002,7 +2077,7 @@ async function runServiceLogs(globalFlags) {
     }
 
     if (manager === 'launchd') {
-      const { logPath, errorLogPath } = getLaunchdPaths();
+      const { logPath, errorLogPath } = getLaunchdPaths(identity);
       if (globalFlags.json) {
         writeJson({ manager, logPath, errorLogPath });
         return;
@@ -2022,7 +2097,7 @@ async function runServiceLogs(globalFlags) {
         writeJson({ manager, journal: true });
         return;
       }
-      runCommand('journalctl', ['--user', '-u', SYSTEMD_SERVICE_NAME, '-n', '200', '--no-pager'], {
+      runCommand('journalctl', ['--user', '-u', identity.systemdServiceName, '-n', '200', '--no-pager'], {
         stdio: 'inherit',
       });
       return;

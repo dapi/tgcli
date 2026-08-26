@@ -2,6 +2,11 @@ import path from 'path';
 
 import TelegramClient from '../telegram-client.js';
 import MessageSyncService from '../message-sync-service.js';
+import {
+  assertAccountIdentity,
+  assertVerifiedAccountMetadata,
+  isNamedAccountStore,
+} from './accounts.js';
 import { loadConfig, normalizeConfig, validateConfig } from './config.js';
 import { resolveStorePaths } from './store.js';
 
@@ -44,18 +49,26 @@ function resolveValidatedConfig(options = {}, resolvedStoreDir = null) {
 export function createTelegramClient(options = {}) {
   const { resolvedStoreDir, sessionPath } = resolveRuntimePaths(options);
   const config = resolveValidatedConfig(options, resolvedStoreDir);
+  const namedAccountStore = resolvedStoreDir ? isNamedAccountStore(resolvedStoreDir) : false;
+  const accountMetadata = namedAccountStore
+    ? assertVerifiedAccountMetadata(resolvedStoreDir)
+    : null;
+  const clientOptions = {
+    forceSms: options.forceSms ?? false,
+    useQr: options.useQr ?? false,
+    disableUpdates: options.disableUpdates ?? false,
+    proxy: config.proxy || undefined,
+  };
+  if (accountMetadata) {
+    clientOptions.identityVerifier = (user) => assertAccountIdentity(resolvedStoreDir, user);
+  }
 
   const telegramClient = new TelegramClient(
     config.apiId,
     config.apiHash,
     config.phoneNumber,
     sessionPath,
-    {
-      forceSms: options.forceSms ?? false,
-      useQr: options.useQr ?? false,
-      disableUpdates: options.disableUpdates ?? false,
-      proxy: config.proxy || undefined,
-    },
+    clientOptions,
   );
 
   return {

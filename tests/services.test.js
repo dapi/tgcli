@@ -25,6 +25,7 @@ import {
   createServices,
   createTelegramClient,
 } from '../core/services.js';
+import { addAccount } from '../core/accounts.js';
 
 describe('core services helpers', () => {
   let storeDir;
@@ -94,6 +95,44 @@ describe('core services helpers', () => {
     expect(messageSyncServiceCtor).toHaveBeenCalledTimes(1);
     expect(result.sessionPath).toBe(path.join(storeDir, 'session.json'));
     expect(result.dbPath).toBe(path.join(storeDir, 'messages.db'));
+  });
+
+  it('installs a fail-closed identity verifier for named account stores', () => {
+    const account = addAccount(storeDir, {
+      id: 'work',
+      phoneNumber: '+77071112233',
+    });
+    fs.writeFileSync(path.join(account.storeDir, 'config.json'), JSON.stringify({
+      apiId: '12345',
+      apiHash: 'hash-value',
+      phoneNumber: '+77071112233',
+    }));
+
+    createTelegramClient({ storeDir: account.storeDir, disableUpdates: true });
+
+    const options = telegramClientCtor.mock.calls[0][4];
+    expect(options.identityVerifier).toBeTypeOf('function');
+    expect(() => options.identityVerifier({ id: 1n, phoneNumber: '77071112233' })).not.toThrow();
+    expect(() => options.identityVerifier({ id: 1n, phone: '77079990000' })).toThrow(/phone mismatch/i);
+  });
+
+  it('refuses a named account store whose identity metadata was removed', () => {
+    const account = addAccount(storeDir, {
+      id: 'work',
+      phoneNumber: '+77071112233',
+    });
+    fs.writeFileSync(path.join(account.storeDir, 'config.json'), JSON.stringify({
+      apiId: '12345',
+      apiHash: 'hash-value',
+      phoneNumber: '+77071112233',
+    }));
+    fs.unlinkSync(path.join(account.storeDir, 'account.json'));
+
+    expect(() => createTelegramClient({
+      storeDir: account.storeDir,
+      disableUpdates: true,
+    })).toThrow(/account metadata.*missing|missing.*account metadata/i);
+    expect(telegramClientCtor).not.toHaveBeenCalled();
   });
 
   it('TELEGRAM_PROXY env var overrides proxy from config.json', () => {
