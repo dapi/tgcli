@@ -547,10 +547,20 @@ function buildDownloadFileName(summary, messageId) {
   return `${baseType}-${messageId}${ext}`;
 }
 
-function resolveDownloadPath(outputPath, { channelId, messageId, summary }) {
+function safeDownloadPathSegment(value) {
+  const normalized = String(value).replace(/[^a-zA-Z0-9@._-]/g, '_');
+  return normalized === '.' || normalized === '..' || !normalized ? '_' : normalized;
+}
+
+export function resolveDownloadPath(outputPath, {
+  channelId,
+  messageId,
+  summary,
+  defaultDownloadDir = DEFAULT_DOWNLOAD_DIR,
+}) {
   const fileName = buildDownloadFileName(summary, messageId);
   if (!outputPath) {
-    return path.resolve(DEFAULT_DOWNLOAD_DIR, String(channelId), fileName);
+    return path.resolve(defaultDownloadDir, safeDownloadPathSegment(channelId), fileName);
   }
   const resolved = path.resolve(outputPath);
   if (fs.existsSync(resolved)) {
@@ -562,6 +572,46 @@ function resolveDownloadPath(outputPath, { channelId, messageId, summary }) {
     return path.join(resolved, fileName);
   }
   return resolved;
+}
+
+export function assertSafeDownloadTarget(targetPath, downloadRoot) {
+  const resolvedRoot = path.resolve(downloadRoot);
+  const resolvedTarget = path.resolve(targetPath);
+  if (!resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error(`Unsafe download target escapes account downloads: ${resolvedTarget}`);
+  }
+
+  fs.mkdirSync(resolvedRoot, { recursive: true });
+  const rootStat = fs.lstatSync(resolvedRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Unsafe download root: ${resolvedRoot}`);
+  }
+
+  const parentPath = path.dirname(resolvedTarget);
+  const relativeParent = path.relative(resolvedRoot, parentPath);
+  let current = resolvedRoot;
+  for (const segment of relativeParent.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    if (fs.existsSync(current)) {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`Unsafe download directory: ${current}`);
+      }
+    } else {
+      fs.mkdirSync(current, { recursive: false });
+    }
+  }
+
+  if (fs.existsSync(resolvedTarget)) {
+    const targetStat = fs.lstatSync(resolvedTarget);
+    if (targetStat.isSymbolicLink()) {
+      throw new Error(`Unsafe symlinked download target: ${resolvedTarget}`);
+    }
+    if (targetStat.isFile() && targetStat.nlink > 1) {
+      throw new Error(`Unsafe hard-linked download target: ${resolvedTarget}`);
+    }
+  }
+  return resolvedTarget;
 }
 
 function resolveDownloadLocation(media) {
@@ -694,9 +744,17 @@ class TelegramClient {
     return message.includes('AUTH_KEY') || message.includes('AUTHORIZATION') || message.includes('SESSION_PASSWORD_NEEDED');
   }
 
+  async _verifyIdentity(user) {
+    if (typeof this.options.identityVerifier === 'function') {
+      await this.options.identityVerifier(user);
+    }
+    return user;
+  }
+
   async _isAuthorized() {
     try {
-      await this.client.getMe();
+      const user = await this.client.getMe();
+      await this._verifyIdentity(user);
       return true;
     } catch (error) {
       if (this._isUnauthorizedError(error)) {
@@ -712,7 +770,8 @@ class TelegramClient {
 
   async getCurrentUser() {
     try {
-      return await this.client.getMe();
+      const user = await this.client.getMe();
+      return await this._verifyIdentity(user);
     } catch (error) {
       if (this._isUnauthorizedError(error)) {
         return null;
@@ -831,6 +890,10 @@ class TelegramClient {
       }
 
       await this.client.start(this._buildStartParams());
+      if (typeof this.options.identityVerifier === 'function') {
+        const authenticatedUser = await this.client.getMe();
+        await this._verifyIdentity(authenticatedUser);
+      }
 
       console.log(hasExistingSession ? 'Existing session is valid.' : 'Logged in successfully!');
       return true;
@@ -1276,12 +1339,18 @@ class TelegramClient {
     }
 
     const summary = summarizeMedia(message.media);
+    const accountDownloadDir = path.join(path.dirname(this.sessionPath), 'downloads');
     const targetPath = resolveDownloadPath(options.outputPath, {
       channelId,
       messageId,
       summary,
+      defaultDownloadDir: accountDownloadDir,
     });
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    if (options.outputPath) {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    } else {
+      assertSafeDownloadTarget(targetPath, accountDownloadDir);
+    }
     await this.client.downloadToFile(targetPath, location);
     const stats = fs.statSync(targetPath);
 

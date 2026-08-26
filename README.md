@@ -78,6 +78,38 @@ MTCUTE_LOG_LEVEL=5 tgcli auth
 MTCUTE_LOG_LEVEL=5 tgcli auth --qr
 ```
 
+## Multiple accounts
+
+The account used without `--account` remains the `default` account in the
+legacy tgcli store. Adding another profile does not move, rewrite, or log out
+that session.
+
+```bash
+# Register an isolated profile. This does not contact Telegram yet.
+tgcli accounts add work --phone "+7 707 111 22 33" --alias office
+
+# Authenticate and use only that profile.
+tgcli --account work auth
+tgcli --account office auth status
+tgcli --account +77071112233 messages search "invoice"
+
+# Environment selection is also supported.
+TGCLI_ACCOUNT=work tgcli sync --follow
+
+tgcli accounts list --json
+```
+
+Named profiles use separate `config.json`, `session.json`, `messages.db`,
+downloads, locks, sync jobs, and service state under
+`<default-store>/accounts/<id>/`. After login tgcli binds the profile to the
+authenticated Telegram user ID. Every authorization check verifies both the
+configured phone and that immutable user ID; a crossed or copied session fails
+closed instead of changing the profile.
+
+Background services are isolated too. The default account keeps the legacy
+service name, while named accounts use labels such as
+`com.dapi.tgcli.work` (launchd) or `tgcli-work` (systemd) and separate logs.
+
 ## Quick start
 
 ```bash
@@ -99,6 +131,7 @@ tgcli server
 
 ```bash
 tgcli auth           Authentication and session setup
+tgcli accounts       Manage isolated Telegram account profiles
 tgcli config         View and edit config
 tgcli sync           Archive backfill and realtime sync
 tgcli server         Run background sync service (MCP optional)
@@ -116,6 +149,7 @@ tgcli doctor         Diagnostics and sanity checks
 ```
 
 Use `tgcli [command] --help` for details. Add `--json` for machine-readable output.
+Select a profile with the global `--account <id|alias|phone>` option.
 
 ### send text
 
@@ -235,6 +269,8 @@ The proxy is optional; when it is unset, tgcli connects directly to Telegram.
 ## Configuration & Store
 
 The tgcli store lives in the OS app-data directory and contains `config.json`, sessions, and `messages.db`.
-Override the location with `TGCLI_STORE`.
+Override the base/default location with `TGCLI_STORE`. Named accounts remain
+under that base store's `accounts/` directory unless a generated background
+service pins their resolved store directly.
 
 Legacy version: see `MIGRATION.md`.

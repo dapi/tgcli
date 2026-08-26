@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   acquireStoreLockMock,
+  bindAccountIdentityMock,
   createTelegramClientMock,
   createMessageSyncServiceMock,
   loadConfigMock,
@@ -13,6 +14,7 @@ const {
   validateConfigMock,
 } = vi.hoisted(() => ({
   acquireStoreLockMock: vi.fn(),
+  bindAccountIdentityMock: vi.fn(),
   createTelegramClientMock: vi.fn(),
   createMessageSyncServiceMock: vi.fn(),
   loadConfigMock: vi.fn(),
@@ -40,6 +42,13 @@ vi.mock('../core/services.js', () => ({
   createTelegramClient: createTelegramClientMock,
 }));
 
+vi.mock('../core/accounts.js', () => ({
+  addAccount: vi.fn(),
+  bindAccountIdentity: bindAccountIdentityMock,
+  listAccounts: vi.fn(),
+  resolveAccountContext: vi.fn(),
+}));
+
 vi.mock('../core/store.js', () => ({
   resolveStoreDir: resolveStoreDirMock,
 }));
@@ -62,6 +71,7 @@ describe('cli auth command', () => {
     normalizeConfigMock.mockImplementation((config) => config);
     validateConfigMock.mockReturnValue([]);
     acquireStoreLockMock.mockReturnValue(vi.fn());
+    bindAccountIdentityMock.mockReset();
     createMessageSyncServiceMock.mockReset();
     createTelegramClientMock.mockReset();
   });
@@ -87,6 +97,27 @@ describe('cli auth command', () => {
     expect(logSpy).toHaveBeenCalledWith(
       'Authenticated. Run `tgcli sync --once` or `tgcli sync --follow` when you need archive data.',
     );
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds a named account to the authenticated Telegram user after login', async () => {
+    const me = { id: 123456789n, phone: '77071112233' };
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    createTelegramClientMock.mockReturnValue({
+      telegramClient: {
+        destroy,
+        getCurrentUser: vi.fn().mockResolvedValue(me),
+        login: vi.fn().mockResolvedValue(true),
+      },
+    });
+
+    await runAuthLogin({
+      account: { id: 'work', storeDir: '/tmp/tgcli-store' },
+      json: false,
+      timeoutMs: null,
+    }, {});
+
+    expect(bindAccountIdentityMock).toHaveBeenCalledWith('/tmp/tgcli-store', me);
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 

@@ -3,12 +3,24 @@
 CLI goal: human-readable output by default with --json for scripting.
 
 ## Global flags
+- --account ID|ALIAS|PHONE
 - --json
 - --timeout DURATION
 - --version
 
 Store location: OS app data dir (override with TGCLI_STORE).
 MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP).
+
+Account precedence: `--account`, then `TGCLI_ACCOUNT`, then `default`.
+The default profile keeps the legacy store. Named profiles use isolated stores
+under `<base-store>/accounts/<id>`.
+
+## accounts
+- accounts list
+- accounts add ID --phone +COUNTRY... [--alias NAME ...]
+  - Adding a profile never authenticates, logs out, or rewrites another profile.
+  - IDs, aliases, and normalized phone numbers must be unique.
+  - Authentication binds a named profile to one immutable Telegram user ID.
 
 ## auth
 - auth
@@ -36,6 +48,7 @@ MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP)
 - service stop
 - service status
 - service logs
+  - Named profiles use per-account launchd/systemd labels, logs, and store state.
 
 ## doctor
 - doctor [--connect]
