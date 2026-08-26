@@ -27,7 +27,7 @@ import {
   parseRetryBackoff,
   SendCommandError,
 } from './core/send-utils.js';
-import { resolveServiceIdentity } from './core/service-identity.js';
+import { parseLaunchdList, resolveServiceIdentity } from './core/service-identity.js';
 import { resolveStoreDir } from './core/store.js';
 import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
 
@@ -1984,15 +1984,11 @@ async function runServiceStatus(globalFlags) {
       installed = fs.existsSync(plistPath);
       const list = runCommand('launchctl', ['list']);
       if (list.status === 0) {
-        const lines = list.stdout.split('\n');
-        for (const line of lines) {
-          if (!line.includes(identity.launchdLabel)) continue;
-          const parts = line.trim().split(/\s+/);
-          const pidValue = parts[0];
-          pid = pidValue && pidValue !== '-' ? Number(pidValue) : null;
-          running = Boolean(pid);
-          statusLabel = running ? 'started' : 'stopped';
-          break;
+        const launchdStatus = parseLaunchdList(list.stdout, identity.launchdLabel);
+        if (launchdStatus) {
+          pid = launchdStatus.pid;
+          running = launchdStatus.running;
+          statusLabel = launchdStatus.status;
         }
       }
     } else if (manager === 'systemd') {
