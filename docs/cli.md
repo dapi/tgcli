@@ -100,6 +100,9 @@ MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP)
 ## groups (optional, permission-based)
 - groups list [--query]
 - groups info --chat <id>
+- groups requests list --chat <id> [--limit N] [--query <text> | --link <invite-url>]
+- groups requests approve --chat <id> --user <id|username>
+- groups requests decline --chat <id> --user <id|username>
 - groups rename --chat <id> --name "New Name"
 - groups members add --chat <id> --user <id> [--user ...]
 - groups members remove --chat <id> --user <id> [--user ...]

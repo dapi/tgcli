@@ -414,6 +414,27 @@ function buildProgram() {
     .description('Show group info')
     .option('--chat <id|username>', 'Group identifier')
     .action(withGlobalOptions((globalFlags, options) => runGroupsInfo(globalFlags, options)));
+  const groupRequests = groups.command('requests').description('Manage join requests');
+  groupRequests
+    .command('list')
+    .description('List pending join requests')
+    .option('--chat <id|username>', 'Group identifier')
+    .option('--limit <n>', 'Limit results')
+    .option('--query <text>', 'Search pending requests by user')
+    .option('--link <url>', 'Filter by invite link')
+    .action(withGlobalOptions((globalFlags, options) => runGroupJoinRequestsList(globalFlags, options)));
+  groupRequests
+    .command('approve')
+    .description('Approve a pending join request')
+    .option('--chat <id|username>', 'Group identifier')
+    .option('--user <id|username>', 'User identifier')
+    .action(withGlobalOptions((globalFlags, options) => runGroupJoinRequestApprove(globalFlags, options)));
+  groupRequests
+    .command('decline')
+    .description('Decline a pending join request')
+    .option('--chat <id|username>', 'Group identifier')
+    .option('--user <id|username>', 'User identifier')
+    .action(withGlobalOptions((globalFlags, options) => runGroupJoinRequestDecline(globalFlags, options)));
   groups
     .command('rename')
     .description('Rename group')
@@ -3639,6 +3660,92 @@ async function runGroupsInfo(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runGroupJoinRequestsList(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    const storeDir = resolveStoreDir();
+    const release = acquireReadLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const result = await telegramClient.listGroupJoinRequests(options.chat, {
+        limit: parsePositiveInt(options.limit, '--limit') ?? 100,
+        query: options.query,
+        link: options.link,
+      });
+      const payload = { channelId: options.chat, ...result };
+
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else if (!result.requests.length) {
+        console.log('No pending join requests.');
+      } else {
+        for (const request of result.requests) {
+          const username = request.username ? ` @${request.username}` : '';
+          const bio = request.bio ? ` — ${request.bio}` : '';
+          console.log(`${request.displayName ?? 'Unknown'}${username} (${request.userId}) ${request.requestedAt}${bio}`);
+        }
+        console.log(`Showing ${result.returned} of ${result.total} pending request(s).`);
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
+async function runGroupJoinRequestResolution(globalFlags, options = {}, action) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    if (!options.user) {
+      throw new Error('--user is required');
+    }
+    const storeDir = resolveStoreDir();
+    const release = acquireStoreLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      await telegramClient.resolveGroupJoinRequest(options.chat, options.user, action);
+      const payload = {
+        channelId: options.chat,
+        userId: options.user,
+        action,
+        ok: true,
+      };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`Join request ${action === 'approve' ? 'approved' : 'declined'} for ${options.user}.`);
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
+async function runGroupJoinRequestApprove(globalFlags, options = {}) {
+  return runGroupJoinRequestResolution(globalFlags, options, 'approve');
+}
+
+async function runGroupJoinRequestDecline(globalFlags, options = {}) {
+  return runGroupJoinRequestResolution(globalFlags, options, 'decline');
+}
+
 async function runGroupsRename(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -4196,6 +4303,9 @@ export {
   normalizeSendCommandError,
   parseNonNegativeInt,
   runAuthLogin,
+  runGroupJoinRequestApprove,
+  runGroupJoinRequestDecline,
+  runGroupJoinRequestsList,
   shouldRunMain,
   writeError,
 };

@@ -2,6 +2,7 @@ const {
   httpProxyTransportCtor,
   mtcuteClientCtor,
   mtProxyTransportCtor,
+  proxyTransportFromUrlMock,
   socksProxyTransportCtor,
 } = vi.hoisted(() => ({
   httpProxyTransportCtor: vi.fn(function (proxy) {
@@ -17,6 +18,7 @@ const {
   mtProxyTransportCtor: vi.fn(function (proxy) {
     this.proxy = proxy;
   }),
+  proxyTransportFromUrlMock: vi.fn((url) => ({ proxyUrl: url })),
   socksProxyTransportCtor: vi.fn(function (proxy) {
     this.proxy = proxy;
   }),
@@ -27,6 +29,7 @@ vi.mock('@mtcute/node', () => ({
   MtProxyTcpTransport: mtProxyTransportCtor,
   SocksProxyTcpTransport: socksProxyTransportCtor,
   TelegramClient: mtcuteClientCtor,
+  proxyTransportFromUrl: proxyTransportFromUrlMock,
 }));
 
 vi.mock('@mtcute/core', () => ({
@@ -40,6 +43,7 @@ import TelegramClient from '../telegram-client.js';
 describe('telegram client auth bootstrap options', () => {
   beforeEach(() => {
     mtcuteClientCtor.mockReset();
+    proxyTransportFromUrlMock.mockClear();
     httpProxyTransportCtor.mockClear();
     mtProxyTransportCtor.mockClear();
     socksProxyTransportCtor.mockClear();
@@ -83,20 +87,8 @@ describe('telegram client auth bootstrap options', () => {
       proxy: 'socks5://127.0.0.1:1080',
     });
 
-    const transportFactory = mtcuteClientCtor.mock.calls[0][0].transport;
-    expect(typeof transportFactory).toBe('function');
-
-    // Invoke the factory — this is what mtcute does per-DC-connection.
-    const transport = transportFactory();
-    expect(socksProxyTransportCtor).toHaveBeenCalledWith({
-      host: '127.0.0.1',
-      port: 1080,
-      user: undefined,
-      password: undefined,
-      version: 5,
-    });
-    expect(transport).toEqual(expect.objectContaining({
-      proxy: expect.objectContaining({ host: '127.0.0.1', port: 1080, version: 5 }),
-    }));
+    const transport = mtcuteClientCtor.mock.calls[0][0].transport;
+    expect(proxyTransportFromUrlMock).toHaveBeenCalledWith('socks5://127.0.0.1:1080');
+    expect(transport).toEqual({ proxyUrl: 'socks5://127.0.0.1:1080' });
   });
 });

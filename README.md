@@ -91,6 +91,7 @@ tgcli send text --to @username --message "done" --reply-to 123
 tgcli send photo --to @channel --photo ./screenshot.png --caption "UI diff" --json --timeout 30s
 tgcli send file --to @channel --file ./report.pdf --caption "<b>weekly report</b>" --parse-mode html
 tgcli send file --to @channel --file ./report.pdf --reply-to 123
+tgcli groups requests list --chat @group --json --timeout 30s
 tgcli server
 ```
 
@@ -177,6 +178,23 @@ tgcli send photo --to @channel --photo ./diff.png --retries 3 --retry-backoff ex
 ### send file
 
 Use `send file` for generic uploads and document-style media. If you need Telegram photo preview rendering for local PNG/JPG, prefer `send photo`.
+
+### group join requests
+
+Administrators can list, approve, and decline pending join requests using the
+authenticated MTProto user account:
+
+```bash
+tgcli groups requests list --chat @group --limit 100 --json --timeout 30s
+tgcli groups requests list --chat @group --query "Alice" --json --timeout 30s
+tgcli groups requests list --chat @group --link "https://t.me/+invite" --json --timeout 30s
+tgcli groups requests approve --chat @group --user 123456789 --json --timeout 30s
+tgcli groups requests decline --chat @group --user 123456789 --json --timeout 30s
+```
+
+`--query` and `--link` are mutually exclusive. These commands require group
+administrator permissions that allow managing invite requests. Approval and
+decline operate on one user at a time; tgcli intentionally has no bulk command.
 
 ## MCP (optional)
 

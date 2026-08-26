@@ -75,5 +75,7 @@ const client = new TelegramClient(apiId, apiHash, phoneNumber, sessionPath, {
 - `getMessagesByChannelId(channelId, limit)`: Returns `{ peerTitle, peerId, peerType, messages }` for the requested chat/channel (messages include `topic_id` when applicable).
 - `listForumTopics(channelId, options?)`: Returns forum topics for a supergroup (uses Telegram forum APIs).
 - `getTopicMessages(channelId, topicId, limit?)`: Returns `{ total, next, messages }` for a forum topic.
+- `listGroupJoinRequests(channelId, options?)`: Returns serialized pending join requests with total and pagination status.
+- `resolveGroupJoinRequest(channelId, userId, action)`: Approves or declines one pending group join request.
 - `filterMessagesByPattern(messages, pattern)`: Filters an array of message _strings_ by a regex pattern.
 - `destroy()`: Closes the underlying MTProto connection (useful for short-lived scripts).

@@ -1,6 +1,6 @@
 {
   "name": "@dapi/tgcli",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "type": "module",
   "description": "Telegram CLI + MCP server powered by MTProto and the official MCP SDK",
   "main": "mcp-server.js",
@@ -55,8 +55,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@mtcute/core": "^0.27.8",
-    "@mtcute/node": "^0.27.8",
+    "@mtcute/core": "^0.31.0",
+    "@mtcute/node": "^0.31.0",
     "better-sqlite3": "^12.6.0",
     "commander": "^12.1.0",
     "qrcode-terminal": "^0.12.0"

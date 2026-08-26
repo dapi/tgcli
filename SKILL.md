@@ -4,7 +4,7 @@ description: >
   Use when user wants to read/search/send/analyze Telegram messages via tgcli CLI.
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
   contacts, groups, tags, media downloads, and archive/sync status.
-  Also covers group admin (rename, members, invite links, join/leave).
+  Also covers group admin (join requests, rename, members, invite links, join/leave).
   For edit/delete/reactions/inline buttons, use telegram-mcp instead.
 ---
 
@@ -40,7 +40,7 @@ tgcli auth
 | Send text/photo/files and topic posts | reactions |
 | Forum topics listing/search | inline bot buttons |
 | Download media from messages | advanced interactive actions |
-| Group admin (rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
+| Group admin (join requests, rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
 | Channel/contact tags and metadata | |
 | Sync jobs and archive monitoring | |
 | JSON output for automation | |
@@ -207,6 +207,11 @@ tgcli contacts notes set --user <id> --notes "Met at meetup" --json --timeout 30
 ```bash
 tgcli groups list --query "dev" --limit 20 --json --timeout 30s
 tgcli groups info --chat <id|@username> --json --timeout 30s
+tgcli groups requests list --chat <id|@username> --limit 100 --json --timeout 30s
+tgcli groups requests list --chat <id|@username> --query "alex" --json --timeout 30s
+tgcli groups requests list --chat <id|@username> --link <invite-url> --json --timeout 30s
+tgcli groups requests approve --chat <id|@username> --user <userId> --json --timeout 30s
+tgcli groups requests decline --chat <id|@username> --user <userId> --json --timeout 30s
 tgcli groups rename --chat <id|@username> --name "New Name" --json --timeout 30s
 tgcli groups members add --chat <id|@username> --user <userId> --user <userId2> --json --timeout 30s
 tgcli groups members remove --chat <id|@username> --user <userId> --json --timeout 30s
@@ -215,6 +220,11 @@ tgcli groups invite revoke --chat <id|@username> --json --timeout 30s
 tgcli groups join --code <invite-code> --json --timeout 30s
 tgcli groups leave --chat <id|@username> --json --timeout 30s
 ```
+
+Join-request commands require group administrator permissions. Never combine
+`--query` and `--link`. Approve or decline only the exact `userId` returned by
+the latest `groups requests list` result; a request may already have been handled
+by another administrator.
 
 ### Tags (Channel Classification)
 

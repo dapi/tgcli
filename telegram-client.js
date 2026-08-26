@@ -3,6 +3,7 @@ import {
   MtProxyTcpTransport,
   SocksProxyTcpTransport,
   TelegramClient as MtCuteClient,
+  proxyTransportFromUrl,
 } from '@mtcute/node';
 import { InputMedia } from '@mtcute/core';
 import { randomLong } from '@mtcute/core/utils.js';
@@ -635,8 +636,7 @@ class TelegramClient {
       platform: createPlatform(),
     };
     if (this.options.proxy) {
-      const proxyUrl = this.options.proxy;
-      clientOptions.transport = () => createProxyTransport(proxyUrl);
+      clientOptions.transport = proxyTransportFromUrl(this.options.proxy);
     }
     if (this.options.disableUpdates) {
       clientOptions.disableUpdates = true;
@@ -1355,6 +1355,53 @@ class TelegramClient {
       membersCount: full?.membersCount ?? chat.membersCount ?? null,
       about: full?.bio ?? null,
     };
+  }
+
+  async listGroupJoinRequests(channelId, options = {}) {
+    await this.ensureLogin();
+    const peerRef = normalizeChannelId(channelId);
+    const limit = options.limit && options.limit > 0 ? Number(options.limit) : 100;
+    const query = typeof options.query === 'string' ? options.query.trim() : '';
+    const link = typeof options.link === 'string' ? options.link.trim() : '';
+    if (query && link) {
+      throw new Error('query cannot be combined with link');
+    }
+
+    const members = await this.client.getInviteLinkMembers(peerRef, {
+      requested: true,
+      limit,
+      requestedSearch: query || undefined,
+      link: link || undefined,
+    });
+    const requests = members.map((member) => ({
+      userId: member.user.id?.toString?.() ?? String(member.user.id),
+      username: member.user.username ?? null,
+      displayName: member.user.displayName ?? null,
+      requestedAt: member.date instanceof Date
+        ? member.date.toISOString()
+        : new Date(member.date).toISOString(),
+      bio: member.bio ?? null,
+      pending: Boolean(member.isPendingRequest),
+    }));
+    const total = Number.isFinite(members.total) ? members.total : requests.length;
+
+    return {
+      total,
+      returned: requests.length,
+      hasMore: total > requests.length,
+      requests,
+    };
+  }
+
+  async resolveGroupJoinRequest(channelId, userId, action) {
+    await this.ensureLogin();
+    if (action !== 'approve' && action !== 'decline') {
+      throw new Error('action must be approve or decline');
+    }
+    const chatId = normalizeChannelId(channelId);
+    const user = normalizeChannelId(userId);
+    await this.client.hideJoinRequest({ chatId, user, action });
+    return true;
   }
 
   async renameGroup(channelId, title) {
