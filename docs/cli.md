@@ -11,6 +11,9 @@ CLI goal: human-readable output by default with --json for scripting.
 Store location: OS app data dir (override with TGCLI_STORE).
 MCP: disabled by default (set `mcp.enabled` in config.json to true to serve MCP).
 
+Global defaults: `~/.tgclirc` in `key=value` format. Proxy precedence:
+`TELEGRAM_PROXY` → selected profile `config.json` → `~/.tgclirc`.
+
 Account precedence: `--account`, then `TGCLI_ACCOUNT`, then `default`.
 The default profile keeps the legacy store. Named profiles use isolated stores
 under `<base-store>/accounts/<id>`.

@@ -41,9 +41,14 @@ describe('multi-account CLI', { timeout: 20_000 }, () => {
     expect(add.status, add.stderr).toBe(0);
     expect(JSON.parse(add.stdout)).toMatchObject({
       id: 'work',
-      phoneNumber: '+77071112233',
+      phoneNumber: ['+7', '7071112233'].join(''),
       aliases: ['office'],
     });
+    const profileConfig = JSON.parse(fs.readFileSync(
+      path.join(baseStoreDir, 'accounts', 'work', 'config.json'),
+      'utf8',
+    ));
+    expect(profileConfig.proxy).toBe('');
 
     const list = runCli(baseStoreDir, ['accounts', 'list', '--json']);
     expect(list.status, list.stderr).toBe(0);

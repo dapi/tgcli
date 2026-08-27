@@ -645,10 +645,10 @@ async function runAccountsList(globalFlags) {
 
 async function runAccountsAdd(globalFlags, id, options = {}) {
   const requestedPhone = normalizePhoneNumber(options.phone);
-  const { config: defaultConfig } = loadConfig(globalFlags.baseStoreDir);
-  const accountConfig = normalizeConfig(defaultConfig ?? {});
-  if (accountConfig.phoneNumber
-      && normalizePhoneNumber(accountConfig.phoneNumber) === requestedPhone) {
+  const { config: defaultConfig, rawConfig: defaultRawConfig } = loadConfig(globalFlags.baseStoreDir);
+  const accountConfig = normalizeConfig(defaultRawConfig ?? {}, { includeEnv: false });
+  if (defaultConfig?.phoneNumber
+      && normalizePhoneNumber(defaultConfig.phoneNumber) === requestedPhone) {
     throw new Error(`Phone ${requestedPhone} already belongs to the default account.`);
   }
   const account = addAccount(globalFlags.baseStoreDir, {
@@ -1644,8 +1644,8 @@ async function runConfigSet(globalFlags, key, value) {
   const storeDir = resolveStoreDir();
   const spec = resolveConfigSpec(key);
   const parsedValue = parseConfigValue(spec, value);
-  const { config } = loadConfig(storeDir);
-  const next = normalizeConfig(config ?? {});
+  const { rawConfig } = loadConfig(storeDir);
+  const next = normalizeConfig(rawConfig ?? {}, { includeEnv: false });
   setValueAtPath(next, spec.path, parsedValue);
   const { config: saved } = saveConfig(storeDir, next);
   const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));
@@ -1659,8 +1659,8 @@ async function runConfigSet(globalFlags, key, value) {
 async function runConfigUnset(globalFlags, key) {
   const storeDir = resolveStoreDir();
   const spec = resolveConfigSpec(key);
-  const { config } = loadConfig(storeDir);
-  if (!config) {
+  const { rawConfig } = loadConfig(storeDir);
+  if (!rawConfig) {
     if (globalFlags.json) {
       writeJson({ ok: true, key: spec.key, value: null });
     } else {
@@ -1668,7 +1668,7 @@ async function runConfigUnset(globalFlags, key) {
     }
     return;
   }
-  const next = normalizeConfig(config ?? {});
+  const next = normalizeConfig(rawConfig, { includeEnv: false });
   deleteValueAtPath(next, spec.path);
   const { config: saved } = saveConfig(storeDir, next);
   const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));

@@ -60,6 +60,7 @@ tgcli auth
 - The `default` profile keeps the legacy store and existing authorization. Never run `auth logout`, move a session, or copy session files merely because a named profile is not visible.
 - Named profiles have physically isolated config, session, messages database, locks, downloads, sync jobs, and service state. Always use the same account selector for auth, reads, writes, sync, and service commands belonging to that profile.
 - If account commands unexpectedly show no profiles or report missing configuration, inspect `TGCLI_STORE`: an inherited temporary/test store can hide the production profile registry. Resolve the intended base store before considering any auth change.
+- Global proxy fallback lives in `~/.tgclirc` as `proxy=<url>` and applies to every account profile. Effective precedence is `TELEGRAM_PROXY` → selected profile `config.json` → `~/.tgclirc`.
 - For sending format control:
   - `--parse-mode markdown|html|none` (case-insensitive)
   - for `send photo` and `send file`, `--parse-mode` requires `--caption`
@@ -334,11 +335,13 @@ tgcli config list --json --timeout 30s
 tgcli config get <key> --json --timeout 30s
 tgcli config set <key> <value> --json --timeout 30s
 tgcli config unset <key> --json --timeout 30s
-# Route via SOCKS5 (stored in config.json)
+# Global fallback shared by all profiles
+# ~/.tgclirc: proxy=socks5://127.0.0.1:1080
+# Route via SOCKS5 for only the selected profile (stored in config.json)
 tgcli config set proxy socks5://127.0.0.1:1080 --json --timeout 30s
 # Route via MTProxy (Telegram t.me link format also accepted)
 tgcli config set proxy "https://t.me/proxy?server=HOST&port=PORT&secret=SECRET" --json --timeout 30s
-# Or via env variable (overrides config.json; put in dotfiles/envrc):
+# Or via env variable (overrides profile config and ~/.tgclirc):
 # export TELEGRAM_PROXY="https://t.me/proxy?server=HOST&port=PORT&secret=SECRET"
 # Remove the configured proxy
 tgcli config unset proxy --json --timeout 30s

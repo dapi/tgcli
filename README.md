@@ -253,6 +253,10 @@ Telegram traffic can be routed through a SOCKS5, HTTP, or MTProto proxy. The
 setting applies to authentication, live requests, and background sync:
 
 ```bash
+# Global fallback for every account profile
+printf '%s\n' 'proxy=socks5://127.0.0.1:1080' > ~/.tgclirc
+chmod 600 ~/.tgclirc
+
 # Existing SSH SOCKS5 tunnel through voldar
 tgcli config set proxy socks5://127.0.0.1:1080
 
@@ -265,6 +269,10 @@ Supported URL formats include `socks5://host:port`,
 proxy URLs such as `https://t.me/proxy?server=...&port=443&secret=...`.
 
 The proxy is optional; when it is unset, tgcli connects directly to Telegram.
+Effective proxy precedence is `TELEGRAM_PROXY`, then the selected profile's
+`config.json`, then the global `~/.tgclirc`. The rc file uses `key=value`
+syntax, ignores blank lines and `#` comments, and is especially useful when all
+isolated account profiles must share one proxy.
 
 ## Configuration & Store
 
@@ -272,5 +280,8 @@ The tgcli store lives in the OS app-data directory and contains `config.json`, s
 Override the base/default location with `TGCLI_STORE`. Named accounts remain
 under that base store's `accounts/` directory unless a generated background
 service pins their resolved store directly.
+
+`~/.tgclirc` contains global fallback defaults outside any store. Keep it mode
+`0600` when the proxy URL contains credentials.
 
 Legacy version: see `MIGRATION.md`.
