@@ -153,8 +153,11 @@ export function loadConfig(storeDir = resolveStoreDir(), options = {}) {
     };
   } catch (error) {
     if (error?.code === 'ENOENT') {
+      const hasFallbackProxy = Boolean(
+        normalizeValue(process.env.TELEGRAM_PROXY) || normalizeValue(rcConfig.proxy),
+      );
       return {
-        config: rcConfig.proxy ? resolveEffectiveConfig({}, rcConfig) : null,
+        config: hasFallbackProxy ? resolveEffectiveConfig({}, rcConfig) : null,
         rawConfig: null,
         path: configPath,
         rcPath,

@@ -102,6 +102,15 @@ describe('global tgclirc configuration', () => {
     );
   });
 
+  it('uses TELEGRAM_PROXY when both profile config and rc file are absent', () => {
+    process.env.TELEGRAM_PROXY = 'socks5://127.0.0.1:9050';
+
+    const loaded = loadConfig(storeDir, { rcPath });
+
+    expect(loaded.config.proxy).toBe('socks5://127.0.0.1:9050');
+    expect(loaded.rawConfig).toBeNull();
+  });
+
   it('fails with the line number for malformed rc entries', () => {
     fs.writeFileSync(rcPath, '# comment\nproxy socks5://127.0.0.1:9050\n');
 
