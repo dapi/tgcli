@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { telegramClientCtor, messageSyncServiceCtor } = vi.hoisted(() => ({
   telegramClientCtor: vi.fn(function (...args) {
@@ -29,8 +29,10 @@ import { addAccount } from '../core/accounts.js';
 
 describe('core services helpers', () => {
   let storeDir;
+  const originalTelegramProxy = process.env.TELEGRAM_PROXY;
 
   beforeEach(() => {
+    delete process.env.TELEGRAM_PROXY;
     storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-services-test-'));
     fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
       apiId: '12345',
@@ -44,6 +46,14 @@ describe('core services helpers', () => {
 
   afterEach(() => {
     fs.rmSync(storeDir, { recursive: true, force: true });
+  });
+
+  afterAll(() => {
+    if (originalTelegramProxy === undefined) {
+      delete process.env.TELEGRAM_PROXY;
+    } else {
+      process.env.TELEGRAM_PROXY = originalTelegramProxy;
+    }
   });
 
   it('creates a telegram client without bootstrapping the archive service', () => {

@@ -55,8 +55,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@mtcute/core": "^0.31.0",
-    "@mtcute/node": "^0.31.0",
+    "@mtcute/core": "0.32.1",
+    "@mtcute/node": "0.32.1",
     "better-sqlite3": "^12.6.0",
     "commander": "^12.1.0",
     "qrcode-terminal": "^0.12.0"

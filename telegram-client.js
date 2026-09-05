@@ -376,6 +376,34 @@ function createProxyTransport(proxyUrl) {
   throw new Error(`Unsupported Telegram proxy protocol: ${url.protocol}`);
 }
 
+function normalizeTelegramProxyUrl(proxyUrl) {
+  let url;
+  try {
+    url = new URL(proxyUrl);
+  } catch {
+    return proxyUrl;
+  }
+
+  const isTelegramMtProxy = url.hostname === 't.me'
+    && (url.pathname === '/proxy' || url.pathname === '/socks');
+  const secret = url.searchParams.get('secret');
+  const fakeTlsSecret = secret?.match(/^(ee[0-9a-f]{32})(.+)$/i);
+  if (!isTelegramMtProxy || !fakeTlsSecret) {
+    return proxyUrl;
+  }
+
+  // Telegram share links encode a FakeTLS secret as hex bytes followed by a
+  // hostname. mtcute accepts the same payload in URL-safe base64, which keeps
+  // the hostname as bytes instead of mistakenly decoding the whole string.
+  const [, hexPrefix, domain] = fakeTlsSecret;
+  const normalizedSecret = Buffer.concat([
+    Buffer.from(hexPrefix, 'hex'),
+    Buffer.from(domain, 'utf8'),
+  ]).toString('base64url');
+  url.searchParams.set('secret', normalizedSecret);
+  return url.toString();
+}
+
 function normalizePeerType(peer) {
   if (!peer) return 'chat';
   if (peer.type === 'user' || peer.type === 'bot') return 'user';
@@ -686,7 +714,7 @@ class TelegramClient {
       platform: createPlatform(),
     };
     if (this.options.proxy) {
-      clientOptions.transport = proxyTransportFromUrl(this.options.proxy);
+      clientOptions.transport = proxyTransportFromUrl(normalizeTelegramProxyUrl(this.options.proxy));
     }
     if (this.options.disableUpdates) {
       clientOptions.disableUpdates = true;

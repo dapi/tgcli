@@ -101,4 +101,20 @@ describe('telegram client auth bootstrap options', () => {
       Buffer.from('ee00112233445566778899aabbccddeeff6578616d706c652e636f6d', 'hex'),
     );
   });
+
+  it('normalizes Telegram FakeTLS share-link secrets for mtcute', () => {
+    const proxyUrl = 'https://t.me/proxy?server=proxy.example&port=443&secret=ee00112233445566778899aabbccddeeffexample.com';
+    new TelegramClient(12345, 'hash', '+1234567890', '/tmp/tgcli-auth-faketls.session', {
+      proxy: proxyUrl,
+    });
+
+    const normalizedUrl = proxyTransportFromUrlMock.mock.calls[0][0];
+    const normalizedSecret = new URL(normalizedUrl).searchParams.get('secret');
+    expect(Buffer.from(normalizedSecret, 'base64url')).toEqual(
+      Buffer.concat([
+        Buffer.from('ee00112233445566778899aabbccddeeff', 'hex'),
+        Buffer.from('example.com', 'utf8'),
+      ]),
+    );
+  });
 });
