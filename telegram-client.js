@@ -387,19 +387,14 @@ function normalizeTelegramProxyUrl(proxyUrl) {
   const isTelegramMtProxy = url.hostname === 't.me'
     && (url.pathname === '/proxy' || url.pathname === '/socks');
   const secret = url.searchParams.get('secret');
-  const fakeTlsSecret = secret?.match(/^(ee[0-9a-f]{32})(.+)$/i);
-  if (!isTelegramMtProxy || !fakeTlsSecret) {
+  if (!isTelegramMtProxy || !secret?.match(/^ee[0-9a-f]+$/i) || secret.length % 2 !== 0) {
     return proxyUrl;
   }
 
-  // Telegram share links encode a FakeTLS secret as hex bytes followed by a
-  // hostname. mtcute accepts the same payload in URL-safe base64, which keeps
-  // the hostname as bytes instead of mistakenly decoding the whole string.
-  const [, hexPrefix, domain] = fakeTlsSecret;
-  const normalizedSecret = Buffer.concat([
-    Buffer.from(hexPrefix, 'hex'),
-    Buffer.from(domain, 'utf8'),
-  ]).toString('base64url');
+  // Telegram share links encode the entire FakeTLS payload as hexadecimal
+  // bytes: `ee`, the 16-byte key, and the domain bytes. mtcute accepts the
+  // same payload in URL-safe base64.
+  const normalizedSecret = Buffer.from(secret, 'hex').toString('base64url');
   url.searchParams.set('secret', normalizedSecret);
   return url.toString();
 }
