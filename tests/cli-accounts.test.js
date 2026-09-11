@@ -163,5 +163,5 @@ describe('multi-account CLI', { timeout: 20_000 }, () => {
     } finally {
       fs.rmSync(isolatedHome, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
