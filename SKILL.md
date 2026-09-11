@@ -250,6 +250,8 @@ tgcli groups rename --chat <id|@username> --name "New Name" --json --timeout 30s
 tgcli groups members add --chat <id|@username> --user <userId> --user <userId2> --json --timeout 30s
 tgcli groups members remove --chat <id|@username> --user <userId> --json --timeout 30s
 tgcli groups invite get --chat <id|@username> --json --timeout 30s
+tgcli groups invite edit --chat <id|@username> --link <invite-url> --request-needed true --json --timeout 30s
+tgcli groups invite edit --chat <id|@username> --link <invite-url> --request-needed false --json --timeout 30s
 tgcli groups invite revoke --chat <id|@username> --json --timeout 30s
 tgcli groups join --code <invite-code> --json --timeout 30s
 tgcli groups leave --chat <id|@username> --json --timeout 30s
@@ -258,7 +260,11 @@ tgcli groups leave --chat <id|@username> --json --timeout 30s
 Join-request commands require group administrator permissions. Never combine
 `--query` and `--link`. Approve or decline only the exact `userId` returned by
 the latest `groups requests list` result; a request may already have been handled
-by another administrator.
+by another administrator. `groups invite edit` changes the specified existing
+link in place and never revokes it. Pass the exact link and verify that the JSON
+response contains the same `link` plus the requested `requestNeeded` value.
+`groups invite get --json` returns the primary link together with its effective
+`requestNeeded` and `isPrimary` values for read-back verification.
 
 ### Tags (Channel Classification)
 

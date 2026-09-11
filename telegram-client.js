@@ -1547,6 +1547,23 @@ class TelegramClient {
     return this.client.getPrimaryInviteLink(peerRef);
   }
 
+  async editGroupInviteLink(channelId, link, options = {}) {
+    await this.ensureLogin();
+    const value = typeof link === 'string' ? link.trim() : '';
+    if (!value) {
+      throw new Error('Invite link must be a non-empty string.');
+    }
+    if (typeof options.requestNeeded !== 'boolean') {
+      throw new Error('requestNeeded must be boolean.');
+    }
+    const peerRef = normalizeChannelId(channelId);
+    return this.client.editInviteLink({
+      chatId: peerRef,
+      link: value,
+      withApproval: options.requestNeeded,
+    });
+  }
+
   async revokeGroupInviteLink(channelId, link) {
     await this.ensureLogin();
     const peerRef = normalizeChannelId(channelId);

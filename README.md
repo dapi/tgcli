@@ -230,6 +230,23 @@ tgcli groups requests decline --chat @group --user 123456789 --json --timeout 30
 administrator permissions that allow managing invite requests. Approval and
 decline operate on one user at a time; tgcli intentionally has no bulk command.
 
+### group invite approval
+
+Enable or disable administrator approval for a specific existing invite link
+without revoking it:
+
+```bash
+tgcli groups invite edit --chat @group --link "https://t.me/+invite" --request-needed true --json --timeout 30s
+tgcli groups invite edit --chat @group --link "https://t.me/+invite" --request-needed false --json --timeout 30s
+```
+
+The command returns the edited `link`, its effective `requestNeeded` value, and
+whether Telegram reports it as `isPrimary`. Telegram must allow the authenticated
+administrator to edit that exact link.
+
+Use `tgcli groups invite get --chat @group --json --timeout 30s` to read the
+primary link together with its effective `requestNeeded` and `isPrimary` values.
+
 ## MCP (optional)
 
 Enable it via config:

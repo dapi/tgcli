@@ -481,6 +481,13 @@ function buildProgram() {
     .option('--chat <id|username>', 'Group identifier')
     .action(withGlobalOptions((globalFlags, options) => runGroupInviteLinkGet(globalFlags, options)));
   groupInvite
+    .command('edit')
+    .description('Edit an existing invite link')
+    .option('--chat <id|username>', 'Group identifier')
+    .option('--link <url>', 'Existing invite link')
+    .option('--request-needed <true|false>', 'Require admin approval before joining')
+    .action(withGlobalOptions((globalFlags, options) => runGroupInviteLinkEdit(globalFlags, options)));
+  groupInvite
     .command('revoke')
     .description('Revoke invite link')
     .option('--chat <id|username>', 'Group identifier')
@@ -3937,9 +3944,56 @@ async function runGroupInviteLinkGet(globalFlags, options = {}) {
       }
       const link = await telegramClient.getGroupInviteLink(options.chat);
       if (globalFlags.json) {
-        writeJson({ link: link.link });
+        writeJson({
+          link: link.link,
+          requestNeeded: Boolean(link.approvalNeeded),
+          isPrimary: Boolean(link.isPrimary),
+        });
       } else {
         console.log(link.link);
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
+async function runGroupInviteLinkEdit(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    if (!options.link) {
+      throw new Error('--link is required');
+    }
+    if (options.requestNeeded === undefined) {
+      throw new Error('--request-needed is required');
+    }
+    const requestNeeded = parseBooleanValue(options.requestNeeded);
+    const storeDir = resolveStoreDir();
+    const release = acquireStoreLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const invite = await telegramClient.editGroupInviteLink(options.chat, options.link, {
+        requestNeeded,
+      });
+      const payload = {
+        channelId: options.chat,
+        link: invite.link,
+        requestNeeded: Boolean(invite.approvalNeeded),
+        isPrimary: Boolean(invite.isPrimary),
+      };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`${invite.link} (request needed: ${payload.requestNeeded})`);
       }
     } finally {
       await messageSyncService.shutdown();
@@ -4381,6 +4435,8 @@ export {
   runGroupJoinRequestApprove,
   runGroupJoinRequestDecline,
   runGroupJoinRequestsList,
+  runGroupInviteLinkEdit,
+  runGroupInviteLinkGet,
   shouldRunMain,
   writeError,
 };
