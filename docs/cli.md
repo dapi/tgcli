@@ -78,6 +78,12 @@ under `<base-store>/accounts/<id>`.
 - messages search <query> [--chat] [--topic] [--source] [--after] [--before] [--tag] [--regex] [--limit]
 - messages show --chat <id> --id <msgId> [--source]
 - messages context --chat <id> --id <msgId> [--before N] [--after N] [--source]
+- messages buttons list --chat <id> --id <msgId>
+  - Reads the live message and returns 1-based row/column, text, type, and
+    actionability without exposing callback payload bytes.
+- messages buttons click --chat <id> --id <msgId> --row N --column N
+  - Clicks only a Telegram callback button. URL/Web App and password-protected
+    buttons fail closed.
 
 The default `--source archive` uses only the local archive. An empty result does not trigger a Telegram request; choose `--source live` or `--source both` explicitly when needed.
 

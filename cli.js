@@ -329,6 +329,21 @@ function buildProgram() {
     .option('--before <n>', 'Messages before')
     .option('--after <n>', 'Messages after')
     .action(withGlobalOptions((globalFlags, options) => runMessagesContext(globalFlags, options)));
+  const messageButtons = messages.command('buttons').description('Inspect and click inline message buttons');
+  messageButtons
+    .command('list')
+    .description('List inline buttons on a live message')
+    .requiredOption('--chat <id|username>', 'Channel identifier')
+    .requiredOption('--id <msgId>', 'Message id')
+    .action(withGlobalOptions((globalFlags, options) => runMessageButtonsList(globalFlags, options)));
+  messageButtons
+    .command('click')
+    .description('Click one callback button using 1-based row and column')
+    .requiredOption('--chat <id|username>', 'Channel identifier')
+    .requiredOption('--id <msgId>', 'Message id')
+    .requiredOption('--row <n>', '1-based button row')
+    .requiredOption('--column <n>', '1-based button column')
+    .action(withGlobalOptions((globalFlags, options) => runMessageButtonClick(globalFlags, options)));
 
   const send = program.command('send').description('Send text, photos, or files');
   send
@@ -1511,6 +1526,7 @@ function formatLiveMessage(message, context) {
     urls: message.urls ?? null,
     media: message.media ?? null,
     topicId: message.topic_id ?? null,
+    inlineButtons: message.inline_buttons ?? null,
   };
 }
 
@@ -3150,6 +3166,83 @@ async function runMessagesContext(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runMessageButtonsList(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    const messageId = parsePositiveInt(options.id, '--id');
+    const storeDir = resolveStoreDir();
+    const release = acquireReadLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `tgcli auth` first.');
+      }
+      const message = await telegramClient.getMessageById(options.chat, messageId);
+      if (!message) {
+        throw new Error('Message not found.');
+      }
+      const payload = {
+        channelId: String(options.chat),
+        messageId,
+        buttons: message.inline_buttons ?? [],
+      };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else if (payload.buttons.length === 0) {
+        console.log('No inline buttons found.');
+      } else {
+        for (const button of payload.buttons) {
+          console.log(`[${button.row},${button.column}] ${button.text} (${button.type})`);
+        }
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
+async function runMessageButtonClick(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    const messageId = parsePositiveInt(options.id, '--id');
+    const row = parsePositiveInt(options.row, '--row');
+    const column = parsePositiveInt(options.column, '--column');
+    const storeDir = resolveStoreDir();
+    const release = acquireStoreLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `tgcli auth` first.');
+      }
+      const result = await telegramClient.clickInlineButton(options.chat, messageId, {
+        row,
+        column,
+      });
+      const payload = { channelId: String(options.chat), ...result };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`Clicked [${row},${column}] ${result.button.text}.`);
+        if (result.answer.message) {
+          console.log(result.answer.message);
+        }
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
 async function runSendText(globalFlags, options = {}) {
   resolveSendAliases(options);
   const timeoutMs = globalFlags.timeoutMs;
@@ -4737,6 +4830,8 @@ export {
   runGroupJoinRequestsList,
   runGroupInviteLinkEdit,
   runGroupInviteLinkGet,
+  runMessageButtonClick,
+  runMessageButtonsList,
   shouldRunMain,
   writeError,
 };

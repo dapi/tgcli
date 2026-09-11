@@ -117,6 +117,8 @@ tgcli auth
 tgcli sync --follow
 tgcli messages list --chat @username --limit 20
 tgcli messages search "course" --chat @channel --source archive
+tgcli messages buttons list --chat @BotFather --id 123 --json
+tgcli messages buttons click --chat @BotFather --id 123 --row 1 --column 1 --json
 tgcli send text --to @username --message "hello"
 tgcli send text --to @username --message "**hi**" --parse-mode markdown
 tgcli send text --to @username --message "done" --reply-to 123
@@ -161,6 +163,21 @@ tgcli doctor         Diagnostics and sanity checks
 
 Use `tgcli [command] --help` for details. Add `--json` for machine-readable output.
 Select a profile with the global `--account <id|alias|phone>` option.
+
+### inline message buttons
+
+Inspect the current inline keyboard on a live message, then explicitly click a
+callback button using its 1-based row and column:
+
+```bash
+tgcli messages buttons list --chat @BotFather --id 123 --json --timeout 30s
+tgcli messages buttons click --chat @BotFather --id 123 --row 1 --column 1 --json --timeout 30s
+```
+
+Button listings contain display text, type, coordinates, and whether the button
+is actionable. Callback payload bytes are never printed. The click command only
+executes Telegram callback buttons; it does not open URL or Web App buttons and
+does not support password-protected callbacks.
 
 ### send text
 

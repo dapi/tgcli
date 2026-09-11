@@ -5,7 +5,7 @@ description: >
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
   contacts, groups, tags, media downloads, multi-account profiles, and archive/sync status.
   Also covers group admin (join requests, rename, members, invite links, join/leave).
-  For edit/delete/reactions/inline buttons, use telegram-mcp instead.
+  For edit/delete/reactions, use telegram-mcp instead.
 ---
 
 # tgcli
@@ -37,9 +37,10 @@ tgcli auth
 | Use tgcli for | Use telegram-mcp for |
 |-|-|
 | Read/search/archive messages | edit/delete/forward |
-| Send text/photo/files and topic posts | reactions |
-| Forum topics listing/search | inline bot buttons |
-| Download media from messages | advanced interactive actions |
+| Inspect/click callback buttons | reactions |
+| Send text/photo/files and topic posts | advanced interactive actions |
+| Forum topics listing/search | |
+| Download media from messages | |
 | Group admin (join requests, rename, members, invite, join/leave) | ban/kick/promote with granular permissions |
 | Channel/contact tags and metadata | |
 | Sync jobs and archive monitoring | |
@@ -139,7 +140,15 @@ tgcli messages show --chat <id|@username> --id <msgId> --source archive --json -
 tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 --source archive --json --timeout 30s
 tgcli messages list --chat <id|@username> --limit 50 --source live --json --timeout 90s
 tgcli messages list --chat <id|@username> --limit 50 --source both --json --timeout 90s
+tgcli messages buttons list --chat <id|@username> --id <msgId> --json --timeout 30s
+tgcli messages buttons click --chat <id|@username> --id <msgId> --row 1 --column 1 --json --timeout 30s
 ```
+
+`messages buttons list` always reads the live message and returns 1-based
+coordinates plus safe button metadata; it never prints callback payload bytes.
+Use those exact coordinates with `messages buttons click`. The click command
+supports callback buttons only and fails closed for URL/Web App or
+password-protected buttons.
 
 Never use `--since` here; the correct flag is `--after`.
 
@@ -439,6 +448,8 @@ Alternative without systemd service (one-shot or foreground):
 - "add user to telegram group"
 - "get invite link for group"
 - "reply to a specific telegram message"
+- "list buttons on a telegram message"
+- "click inline callback button"
 - "start syncing this channel"
 - "monitor my telegram channels"
 - "прочитай сообщения в канале"
@@ -454,7 +465,6 @@ Alternative without systemd service (one-shot or foreground):
 
 - "edit/delete/forward telegram message"
 - "react with emoji to message"
-- "click inline button in bot"
 - "ban/kick/promote user with granular permissions"
 
 Use `telegram-mcp` for those operations.

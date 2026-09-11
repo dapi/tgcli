@@ -140,6 +140,89 @@ function sanitizeString(value) {
   return typeof value === 'string' ? value : '';
 }
 
+function getInlineButtonGrid(message) {
+  const markup = message?.markup;
+  if (!markup || markup.type !== 'inline' || !Array.isArray(markup.buttons)) {
+    return [];
+  }
+  return markup.buttons;
+}
+
+function normalizeInlineButtonType(button) {
+  const kind = button?._ === 'keyboardInlineButton' ? button.type?._ : button?._;
+  switch (kind) {
+    case 'keyboardButtonCallback':
+    case 'inlineButtonTypeCallback':
+      return 'callback';
+    case 'keyboardButtonUrl':
+    case 'keyboardButtonUrlAuth':
+    case 'inputKeyboardButtonUrlAuth':
+    case 'inlineButtonTypeUrl':
+    case 'inlineButtonTypeUrlAuth':
+    case 'inputInlineButtonTypeUrlAuth':
+      return 'url';
+    case 'keyboardButtonWebView':
+    case 'keyboardButtonSimpleWebView':
+    case 'inlineButtonTypeWebView':
+      return 'web_view';
+    case 'keyboardButtonSwitchInline':
+    case 'inlineButtonTypeSwitchInline':
+      return 'switch_inline';
+    case 'keyboardButtonGame':
+    case 'inlineButtonTypeGame':
+      return 'game';
+    case 'keyboardButtonBuy':
+    case 'inlineButtonTypeBuy':
+      return 'buy';
+    case 'keyboardButtonUserProfile':
+    case 'inputKeyboardButtonUserProfile':
+    case 'inlineButtonTypeUserProfile':
+    case 'inputInlineButtonTypeUserProfile':
+      return 'user_profile';
+    case 'keyboardButtonCopy':
+    case 'inlineButtonTypeCopy':
+      return 'copy';
+    case 'inlineButtonTypeDisabled':
+      return 'disabled';
+    default:
+      return 'unsupported';
+  }
+}
+
+function summarizeInlineButton(button, row, column) {
+  const type = normalizeInlineButtonType(button);
+  const buttonType = button?._ === 'keyboardInlineButton' ? button.type : button;
+  const requiresPassword = type === 'callback' && Boolean(buttonType?.requiresPassword);
+  return {
+    row,
+    column,
+    text: sanitizeString(button?.text),
+    type,
+    actionable: type === 'callback' && !requiresPassword,
+    requiresPassword,
+  };
+}
+
+function summarizeInlineButtons(message) {
+  return getInlineButtonGrid(message).flatMap((buttons, rowIndex) => {
+    if (!Array.isArray(buttons)) {
+      return [];
+    }
+    return buttons.map((button, columnIndex) => (
+      summarizeInlineButton(button, rowIndex + 1, columnIndex + 1)
+    ));
+  });
+}
+
+function summarizeCallbackAnswer(answer) {
+  return {
+    message: typeof answer?.message === 'string' ? answer.message : null,
+    alert: Boolean(answer?.alert),
+    url: typeof answer?.url === 'string' ? answer.url : null,
+    cacheTime: Number.isFinite(answer?.cacheTime) ? answer.cacheTime : null,
+  };
+}
+
 function normalizeParseMode(value) {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -1163,6 +1246,52 @@ class TelegramClient {
     return this._serializeMessage(message, peer);
   }
 
+  async clickInlineButton(channelId, messageId, options = {}) {
+    await this.ensureLogin();
+    const row = Number(options.row);
+    const column = Number(options.column);
+    if (!Number.isInteger(row) || row < 1) {
+      throw new Error('Inline button row must be a positive 1-based integer.');
+    }
+    if (!Number.isInteger(column) || column < 1) {
+      throw new Error('Inline button column must be a positive 1-based integer.');
+    }
+
+    const peerRef = normalizeChannelId(channelId);
+    const [message] = await this.client.getMessages(peerRef, Number(messageId));
+    if (!message) {
+      throw new Error('Message not found.');
+    }
+
+    const grid = getInlineButtonGrid(message);
+    const button = grid[row - 1]?.[column - 1];
+    if (!button) {
+      throw new Error(`Inline button not found at row ${row}, column ${column}.`);
+    }
+
+    const summary = summarizeInlineButton(button, row, column);
+    if (summary.type !== 'callback') {
+      throw new Error(
+        `Inline button at row ${row}, column ${column} is type ${summary.type}; only callback buttons can be clicked.`,
+      );
+    }
+    if (summary.requiresPassword) {
+      throw new Error('Password-protected callback buttons are not supported.');
+    }
+
+    const answer = await this.client.getCallbackAnswer({
+      chatId: peerRef,
+      message: Number(messageId),
+      data: button?._ === 'keyboardInlineButton' ? button.type.data : button.data,
+    });
+
+    return {
+      messageId: Number(messageId),
+      button: summary,
+      answer: summarizeCallbackAnswer(answer),
+    };
+  }
+
   async getMessageContext(channelId, messageId, options = {}) {
     await this.ensureLogin();
     const safeBefore = Number.isFinite(options.before) && options.before >= 0
@@ -1726,6 +1855,7 @@ class TelegramClient {
     const senderPeerType = sender ? normalizePeerType(sender) : null;
     const senderIsBot = typeof sender?.isBot === 'boolean' ? sender.isBot : null;
     const mediaSummary = summarizeMedia(message.media);
+    const inlineButtons = summarizeInlineButtons(message);
 
     return {
       id,
@@ -1742,6 +1872,7 @@ class TelegramClient {
       peer_id: resolvedPeer?.id?.toString?.() ?? 'unknown',
       topic_id: topicId,
       media: mediaSummary,
+      inline_buttons: inlineButtons.length > 0 ? inlineButtons : null,
       raw: message.raw ?? null,
     };
   }
