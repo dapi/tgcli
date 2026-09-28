@@ -264,6 +264,14 @@ tgcli config set mcp.port 8080
 
 Then run `tgcli server` and point your client at the configured address.
 
+One server can serve multiple MCP clients at the same time. Each client gets its
+own MCP session, while all sessions for that account share one Telegram client
+and one archive service. Sync jobs still run through a single sequential queue.
+During shutdown, the server lets active MCP tool calls finish before closing
+their sessions and the shared services. This concurrency model applies to MCP
+clients connected to the same server process; separate `tgcli` processes still
+open the account store directly.
+
 ### Telegram proxy
 
 Telegram traffic can be routed through a SOCKS5, HTTP, or MTProto proxy. The

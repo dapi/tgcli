@@ -25,7 +25,7 @@ const mcpEnabled = Boolean(mcpConfig.enabled);
 const resolvedHost = mcpConfig.host ?? process.env.MCP_HOST ?? process.env.FASTMCP_HOST ?? "127.0.0.1";
 const resolvedPort = Number(mcpConfig.port ?? process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
 const HOST = resolvedHost;
-const PORT = Number.isFinite(resolvedPort) && resolvedPort > 0 ? resolvedPort : 8080;
+const PORT = Number.isFinite(resolvedPort) && resolvedPort >= 0 ? resolvedPort : 8080;
 const { telegramClient, messageSyncService } = createServices({ storeDir, config });
 
 let telegramReady = false;
@@ -90,7 +90,19 @@ async function initializeTelegram() {
  * Represents an active MCP session – a transport plus its server instance.
  */
 const sessions = new Map();
+const activeRequests = new Set();
 let shuttingDown = false;
+let shutdownPromise = null;
+
+async function trackRequest(task) {
+  const request = task();
+  activeRequests.add(request);
+  try {
+    return await request;
+  } finally {
+    activeRequests.delete(request);
+  }
+}
 
 function closeSessionRecord(record, context) {
   if (!record || record.closing) {
@@ -2117,6 +2129,10 @@ let httpServer = null;
 if (mcpEnabled) {
   httpServer = http.createServer(async (req, res) => {
     try {
+      if (shuttingDown) {
+        res.writeHead(503).end("Server is shutting down");
+        return;
+      }
       const url = new URL(req.url ?? "", `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
 
       if (req.method === "OPTIONS") {
@@ -2132,7 +2148,7 @@ if (mcpEnabled) {
       }
 
       if (req.method === "POST" && url.pathname === "/mcp") {
-        await handlePost(req, res);
+        await trackRequest(() => handlePost(req, res));
         return;
       }
 
@@ -2174,7 +2190,7 @@ if (mcpEnabled) {
   });
 
   httpServer.listen(PORT, HOST, () => {
-    console.log(`[startup] MCP HTTP server listening on http://${HOST}:${PORT}/mcp`);
+    console.log(`[startup] MCP HTTP server listening on http://${HOST}:${httpServer.address().port}/mcp`);
   });
 
   httpServer.on("error", (error) => {
@@ -2184,12 +2200,19 @@ if (mcpEnabled) {
   console.log("[startup] MCP disabled; running sync-only service.");
 }
 
-async function shutdown() {
-  if (shuttingDown) {
-    return;
-  }
+async function performShutdown() {
   shuttingDown = true;
   console.log("[shutdown] received termination signal, closing resources...");
+  const httpClosed = httpServer
+    ? new Promise((resolve) => httpServer.close(() => {
+      console.log("[shutdown] HTTP server closed");
+      resolve();
+    }))
+    : Promise.resolve();
+
+  // Let in-flight tool calls finish before closing their transports or the
+  // shared Telegram client and archive database.
+  await Promise.allSettled(Array.from(activeRequests));
   const closeTasks = [];
   for (const record of sessions.values()) {
     const task = closeSessionRecord(record, "shutdown");
@@ -2200,12 +2223,11 @@ async function shutdown() {
   if (closeTasks.length) {
     await Promise.allSettled(closeTasks);
   }
-  if (httpServer) {
-    httpServer.closeAllConnections?.();
-    httpServer.close(() => {
-      console.log("[shutdown] HTTP server closed");
-    });
-  }
+  // The SDK can leave an HTTP stream open after its transport has closed.
+  // Active tool responses have finished by this point, so remaining sockets
+  // can be closed without interrupting work.
+  httpServer?.closeAllConnections?.();
+  await httpClosed;
 
   try {
     await messageSyncService.shutdown();
@@ -2225,9 +2247,16 @@ async function shutdown() {
   });
 }
 
+function shutdown() {
+  shutdownPromise ??= performShutdown();
+  return shutdownPromise;
+}
+
 const handleShutdownSignal = () => {
   void shutdown().finally(() => process.exit(0));
 };
 
 process.prependListener("SIGINT", handleShutdownSignal);
 process.prependListener("SIGTERM", handleShutdownSignal);
+
+export { httpServer, shutdown };
