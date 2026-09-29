@@ -99,6 +99,60 @@ it('serves concurrent CLI requests from a real server process with MCP disabled'
   expect(readStoreLock(storeDir).exists).toBe(false);
 });
 
+it('keeps archive and IPC available when Telegram defers dialog refresh', async () => {
+  storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-flood-'));
+  fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+    apiId: 12345, apiHash: 'fixture-only', phoneNumber: '+1234567890',
+    mcp: { enabled: false },
+  }));
+  server = spawn(process.execPath, ['--experimental-loader', loaderPath, serverPath], {
+    cwd: root,
+    env: { ...process.env, TGCLI_STORE: storeDir, TGCLI_MOCK_DIALOG_FLOOD_ONCE: '1',
+      TELEGRAM_PROXY: 'socks5://127.0.0.1:1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Degraded startup timed out: ${output}`)), 8000);
+    server.stdout.on('data', (chunk) => {
+      output += chunk;
+      if (output.includes('MCP disabled; running sync and local CLI service.')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    server.stderr.on('data', (chunk) => { output += chunk; });
+    server.once('error', (error) => { clearTimeout(timer); reject(error); });
+    server.once('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Server exited before degraded readiness (${code}): ${output}`));
+    });
+  });
+  expect(output).toContain('Dialog refresh deferred after Telegram rate limit');
+  expect(JSON.parse(fs.readFileSync(path.join(storeDir, 'service-state.json'), 'utf8'))
+    .dialogRefreshDeferred).toBe(true);
+
+  const [status, archive] = await Promise.all([
+    runCli(['sync', 'status']),
+    runCli(['messages', 'list', '--source', 'archive', '--limit', '1']),
+  ]);
+  expect(status.code, status.stderr).toBe(0);
+  expect(JSON.parse(status.stdout).dialogRefreshDeferred).toBe(true);
+  expect(archive.code, archive.stderr).toBe(0);
+  expect(readStoreLock(storeDir).exists).toBe(true);
+
+  const resumed = await runCli(['sync', '--once', '--idle-exit', '1s']);
+  expect(resumed.code, resumed.stderr).toBe(0);
+  expect(JSON.parse(fs.readFileSync(path.join(storeDir, 'service-state.json'), 'utf8'))
+    .dialogRefreshDeferred).toBe(false);
+  const resumedStatus = await runCli(['sync', 'status']);
+  expect(JSON.parse(resumedStatus.stdout).dialogRefreshDeferred).toBe(false);
+
+  server.kill('SIGTERM');
+  await new Promise((resolve) => server.once('exit', resolve));
+  expect(readStoreLock(storeDir).exists).toBe(false);
+});
+
 it.skipIf(!selectorAvailable)('serves two MCP clients and a CLI client from the same owner', async () => {
   const allocation = spawnSync('port-selector', ['--name', 'tgcli-mcp-integration'], {
     cwd: root, encoding: 'utf8',

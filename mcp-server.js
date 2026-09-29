@@ -14,6 +14,7 @@ import { acquireOwnerLock } from "./store-lock.js";
 import { startOwnerIpc } from "./core/owner-ipc.js";
 import { createOwnerOperations } from "./core/owner-operations.js";
 import { OwnerCoordinator } from "./core/owner-coordinator.js";
+import { parseRequiredWaitSeconds } from "./core/retry.js";
 
 const SERVICE_STATE_FILE = "service-state.json";
 
@@ -42,6 +43,7 @@ const { telegramClient, messageSyncService } = services;
 const ownerCoordinator = new OwnerCoordinator();
 
 let telegramReady = false;
+let dialogRefreshDeferred = false;
 let serviceState = null;
 
 function readVersion() {
@@ -92,10 +94,18 @@ async function initializeTelegram() {
     throw new Error("Failed to initialize Telegram dialog list");
   }
 
-  const dialogCount = await messageSyncService.refreshChannelsFromDialogs();
-  console.log(`[startup] Seeded ${dialogCount} dialogs into archive registry.`);
+  try {
+    const dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+    console.log(`[startup] Seeded ${dialogCount} dialogs into archive registry.`);
+  } catch (error) {
+    const waitSeconds = parseRequiredWaitSeconds(error);
+    if (waitSeconds === null) throw error;
+    dialogRefreshDeferred = true;
+    console.warn(`[startup] Dialog refresh deferred after Telegram rate limit (${waitSeconds}s). ` +
+      'The existing archive and owner IPC remain available; run `tgcli sync --once` to retry later.');
+  }
   messageSyncService.startRealtimeSync();
-  messageSyncService.resumePendingJobs();
+  if (!dialogRefreshDeferred) messageSyncService.resumePendingJobs();
   telegramReady = true;
 }
 
@@ -2125,6 +2135,11 @@ await initializeTelegram().then(async () => {
     ownerLock,
     operations: createOwnerOperations({ storeDir, telegramClient, messageSyncService,
       onAuthLogout: () => shutdown().finally(() => process.exit(0)),
+      onDialogsRefreshed: () => {
+        dialogRefreshDeferred = false;
+        updateServiceState({ dialogRefreshDeferred: false });
+      },
+      getDialogRefreshDeferred: () => dialogRefreshDeferred,
       coordinator: ownerCoordinator }),
   });
 }).catch(async (error) => {
@@ -2140,6 +2155,7 @@ serviceState = {
   version: readVersion(),
   manager: process.env.TGCLI_SERVICE_MANAGER ?? "manual",
   startedAt: new Date().toISOString(),
+  dialogRefreshDeferred,
   mcpEnabled,
   mcpHost: mcpEnabled ? HOST : null,
   mcpPort: mcpEnabled ? PORT : null,

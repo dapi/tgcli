@@ -15,6 +15,7 @@ function loadCliModule() {
 }
 
 export function createOwnerOperations({ storeDir, telegramClient, messageSyncService, onAuthLogout,
+  onDialogsRefreshed, getDialogRefreshDeferred = () => false,
   coordinator = new OwnerCoordinator() }) {
   return {
     'auth.current': (_, context) => coordinator.runLive(async () => {
@@ -26,7 +27,8 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       if (onAuthLogout) setTimeout(() => void onAuthLogout(), 250);
       return { loggedOut: true };
     },
-    'sync.status': () => ({ queue: messageSyncService.getQueueStats() }),
+    'sync.status': () => ({ queue: messageSyncService.getQueueStats(),
+      dialogRefreshDeferred: getDialogRefreshDeferred() }),
     'doctor.status': ({ connect = false }, context) => coordinator.runLive(async () => {
       const authenticated = await telegramClient.isAuthorized().catch(() => false);
       if (connect && authenticated) await telegramClient.startUpdates();
@@ -39,6 +41,7 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
     }, context),
     'sync.once': async ({ idleExitMs = 30000 }, { signal }) => {
       await messageSyncService.refreshChannelsFromDialogs();
+      onDialogsRefreshed?.();
       messageSyncService.resumePendingJobs();
       let idleSince = null;
       while (!signal?.aborted) {

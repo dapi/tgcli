@@ -36,6 +36,7 @@ under `<base-store>/accounts/<id>`.
 - sync
   - Flags: --once | --follow, --idle-exit 30s, --download-media, --refresh-contacts, --refresh-groups
 - sync status
+  - JSON includes `dialogRefreshDeferred`: `true` when the server postponed its startup dialog refresh after a Telegram rate limit, `false` when current, or `null` if the owner cannot be queried.
 - sync jobs list [--status] [--limit] [--channel]
 - sync jobs add --chat <id|username> [--min-date ISO] [--depth N]
 - sync jobs retry [--job-id] [--channel] [--all-errors]
@@ -44,6 +45,7 @@ under `<base-store>/accounts/<id>`.
 ## server
 - server
   - Start the background sync service and private CLI socket (MCP HTTP server runs only when enabled in config).
+  - A Telegram rate limit during dialog refresh leaves the server available in a deferred sync state; retry later with `sync --once`.
 
 ## owner
 - owner request <requestId>

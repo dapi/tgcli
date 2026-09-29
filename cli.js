@@ -2390,9 +2390,13 @@ async function runSyncStatus(globalFlags) {
     const ownerInfo = parseStoreLock(owner.info);
     const ownerAlive = ownerInfo?.pid && isPidAlive(ownerInfo.pid);
     let queue;
+    let dialogRefreshDeferred = ownerAlive ? null : false;
     if (ownerAlive && ownerInfo.state === 'ready') {
       try {
-        ({ queue } = await runOwnerOperation({ storeDir, operation: 'sync.status', timeoutMs: timeoutMs ?? 30000 }));
+        const result = await runOwnerOperation({ storeDir, operation: 'sync.status',
+          timeoutMs: timeoutMs ?? 30000 });
+        queue = result.queue;
+        dialogRefreshDeferred = result.dialogRefreshDeferred ?? null;
       } catch (error) {
         if (!['OWNER_UNAVAILABLE', 'OWNER_STARTING', 'UNKNOWN_RESULT', 'ECONNREFUSED', 'ENOENT'].includes(error.code)) throw error;
       }
@@ -2411,10 +2415,13 @@ async function runSyncStatus(globalFlags) {
       if (ownerAlive) queue.processing = null;
     }
     if (globalFlags.json) {
-      writeJson({ queue });
+      writeJson({ queue, dialogRefreshDeferred });
     } else {
       console.log(`QUEUE: pending=${queue.pending} in_progress=${queue.in_progress} idle=${queue.idle} error=${queue.error}`);
       console.log(`PROCESSING: ${queue.processing ?? 'unknown'}`);
+      if (dialogRefreshDeferred !== false) {
+        console.log(`DIALOG REFRESH: ${dialogRefreshDeferred ? 'deferred by Telegram rate limit' : 'unknown'}`);
+      }
     }
   }, timeoutMs);
 }

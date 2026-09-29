@@ -54,6 +54,7 @@ tgcli auth
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
 - `--source archive` reads only the local archive, including when no result is found. Use `--source live` to query Telegram or `--source both` to combine them.
 - With `tgcli server` or `tgcli sync --follow` running, archive message reads, cached tags, and `sync jobs list` use read-only SQLite. Live reads and commands that change the store use the owner's private local socket even if MCP is disabled. Without an owner, the CLI claims the store itself for those commands. A live owner whose socket is unavailable must be fixed or stopped before retrying an owner-dependent command; the CLI does not open a second session.
+- When Telegram rate-limits the server's startup dialog refresh, the server remains available but pauses pending sync work. `tgcli sync status --json` shows `dialogRefreshDeferred: true`; retry the refresh later with `tgcli sync --once` through the same owner. Do not repeatedly retry during `FLOOD_WAIT`.
 - If a live command reports `UNKNOWN_RESULT`, do not retry a send or other non-idempotent change blindly. Use the returned `requestId` with `tgcli owner request <requestId> --json` while the same owner is running; inspect the chat or archive before retrying if the request is still running or its outcome is unknown.
 - Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
