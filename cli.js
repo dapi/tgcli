@@ -2084,6 +2084,15 @@ async function runServiceInstall(globalFlags) {
     if (manager === 'launchd') {
       const { plistPath, logPath, errorLogPath } = getLaunchdPaths(identity);
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      for (const filePath of [logPath, errorLogPath]) {
+        const fd = fs.openSync(filePath, 'a', 0o600);
+        try {
+          fs.fchmodSync(fd, 0o600);
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
       const content = buildLaunchdPlist({
         label: identity.launchdLabel,
         nodePath: process.execPath,

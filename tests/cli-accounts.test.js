@@ -137,6 +137,9 @@ describe('multi-account CLI', { timeout: 20_000 }, () => {
   it.runIf(process.platform === 'darwin')('installs a launchd service isolated to the named account', () => {
     const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-service-home-test-'));
     try {
+      const fakeBin = path.join(isolatedHome, 'bin');
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(path.join(fakeBin, 'brew'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       expect(runCli(baseStoreDir, [
         'accounts', 'add', 'work', '--phone', '+77071112233',
       ]).status).toBe(0);
@@ -144,7 +147,7 @@ describe('multi-account CLI', { timeout: 20_000 }, () => {
       const install = runCli(
         baseStoreDir,
         ['--account', 'work', 'service', 'install', '--json'],
-        { HOME: isolatedHome },
+        { HOME: isolatedHome, PATH: `${fakeBin}:${process.env.PATH}` },
       );
       expect(install.status, install.stderr).toBe(0);
       const payload = JSON.parse(install.stdout);
@@ -160,6 +163,10 @@ describe('multi-account CLI', { timeout: 20_000 }, () => {
       expect(plist).toContain(path.join(baseStoreDir, 'accounts', 'work'));
       expect(plist).toContain(path.join(isolatedHome, 'Library', 'Logs', 'tgcli.work.log'));
       expect(plist).not.toContain('<string>com.dapi.tgcli</string>');
+      for (const logName of ['tgcli.work.log', 'tgcli.work.error.log']) {
+        const logPath = path.join(isolatedHome, 'Library', 'Logs', logName);
+        expect(fs.statSync(logPath).mode & 0o777).toBe(0o600);
+      }
     } finally {
       fs.rmSync(isolatedHome, { recursive: true, force: true });
     }
