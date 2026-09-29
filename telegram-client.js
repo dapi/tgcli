@@ -918,6 +918,7 @@ class TelegramClient {
         await this._verifyIdentity(authenticatedUser);
       }
 
+      this._restrictSessionFileMode();
       console.log(hasExistingSession ? 'Existing session is valid.' : 'Logged in successfully!');
       return true;
     } catch (error) {
@@ -943,6 +944,16 @@ class TelegramClient {
       }
       console.error('Error during login:', error);
       return false;
+    }
+  }
+
+  // The session file is the account credential, so it gets the same 0600 the store
+  // already gives config.json and account.json. mtcute writes it with the default umask.
+  _restrictSessionFileMode() {
+    try {
+      fs.chmodSync(this.sessionPath, 0o600);
+    } catch {
+      // A missing or foreign-owned session file is not a reason to fail the login
     }
   }
 
