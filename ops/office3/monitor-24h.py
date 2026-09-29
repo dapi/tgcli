@@ -8,7 +8,7 @@ from pathlib import Path
 import socket
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def utc_now():
@@ -16,7 +16,8 @@ def utc_now():
 
 
 def probe(port):
-    command = [str(Path.home() / ".local/bin/tgcli"), "service", "status", "--json"]
+    tgcli = str(Path.home() / ".local/bin/tgcli")
+    command = [tgcli, "service", "status", "--json"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True)
         service = json.loads(result.stdout)
@@ -27,6 +28,17 @@ def probe(port):
         running, pid, version = False, None, None
 
     try:
+        result = subprocess.run(
+            [tgcli, "sync", "status", "--json"],
+            capture_output=True, text=True, timeout=20, check=True,
+        )
+        sync_status = json.loads(result.stdout)
+        ipc_ready = isinstance(sync_status, dict)
+        dialog_refresh_deferred = sync_status.get("dialogRefreshDeferred") is True
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        ipc_ready, dialog_refresh_deferred = False, None
+
+    try:
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             mcp_listening = True
     except OSError:
@@ -34,11 +46,14 @@ def probe(port):
 
     return {
         "at": utc_now(),
-        "healthy": running and mcp_listening and version == "2.9.0",
+        "healthy": running and ipc_ready and mcp_listening and version == "2.9.0"
+        and not dialog_refresh_deferred,
         "running": running,
         "pid": pid,
         "cliVersion": version,
         "mcpListening": mcp_listening,
+        "ipcReady": ipc_ready,
+        "dialogRefreshDeferred": dialog_refresh_deferred,
     }
 
 
@@ -69,7 +84,9 @@ def main():
     samples = os.open(samples_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     os.chmod(samples_path, 0o600)
 
-    started = utc_now()
+    started_time = datetime.now(timezone.utc)
+    started = started_time.isoformat(timespec="seconds")
+    scheduled_end = (started_time + timedelta(seconds=args.duration)).isoformat(timespec="seconds")
     deadline = time.monotonic() + args.duration
     count = 0
     failures = 0
@@ -87,6 +104,7 @@ def main():
             completed = time.monotonic() >= deadline
             write_json(summary_path, {
                 "startedAt": started,
+                "scheduledEndAt": scheduled_end,
                 "lastSampleAt": sample["at"],
                 "completed": completed,
                 "samples": count,

@@ -13,8 +13,8 @@ installation. Service logs are mode `0600` under `~/code/tgcli/log/` and are
 ignored by Git.
 
 For a 24-hour observation, run `python3 ~/code/tgcli/ops/office3/monitor-24h.py
---port 5173` in the background on office3. It samples launchd service status
-and the loopback MCP listener every five minutes without Telegram API calls.
+--port 5173` in the background on office3. It samples launchd service status,
+owner IPC, and the loopback MCP listener every five minutes without Telegram API calls.
 The current result is `~/code/tgcli/log/office3-monitor-2.9.0-summary.json`;
 individual samples are in the adjacent `.jsonl` file.
 
