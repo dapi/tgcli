@@ -78,6 +78,6 @@ Implementation tests should use temporary stores and mocked Telegram clients by 
 
 ## Verification record (2026-09-29)
 
-- Unit and multi-process suite: 323 tests passed. The process tests cover concurrent CLI calls to one owner, read-only archive access during a WAL write, owner identity and protocol checks, socket permissions, stale and competing lock claims, output preservation, and refusal to create a second session when owner IPC is unavailable.
+- Unit and multi-process suite: 324 tests passed. The process tests cover concurrent CLI calls to one owner, read-only archive access during a WAL write, owner identity and protocol checks, socket permissions, stale and competing lock claims, output preservation, and refusal to create a second session when owner IPC is unavailable. A route classification test covers every runnable CLI command.
 - A real-account archive-only `sync status` and `messages list --limit 1` succeeded without taking `LOCK`.
 - The controlled real-account server smoke did not reach IPC readiness: Telegram returned `FLOOD_WAIT_22`, then `FLOOD_WAIT_23` on one retry during `refreshChannelsFromDialogs()`. Both attempts released `LOCK`. The live server/CLI integration gate remains unverified until Telegram permits that request; no further retry was made.

@@ -788,6 +788,9 @@ function withGlobalOptions(handler) {
         if (result.stdout) process.stdout.write(result.stdout);
         return;
       }
+      if (classifyCliRoute(name) === null) {
+        throw new Error(`CLI command has no store route: ${name}`);
+      }
       await handler(globalFlags, ...args);
     } catch (error) {
       writeError(error, globalFlags?.json ?? process.argv.includes('--json'));
@@ -4548,6 +4551,35 @@ const ownerCliHandlers = {
   'folders chats remove': runFoldersChatsRemove,
   'folders join': runFoldersJoin,
 };
+
+const localCliCommands = new Set([
+  'auth',
+  'auth logout',
+  'accounts list',
+  'accounts add',
+  'config list',
+  'config get',
+  'sync',
+  'sync status',
+  'sync jobs list',
+  'sync jobs add',
+  'sync jobs retry',
+  'sync jobs cancel',
+  'server',
+  'service install',
+  'service start',
+  'service stop',
+  'service status',
+  'service logs',
+  'doctor',
+  'channels list',
+]);
+
+export function classifyCliRoute(name) {
+  if (ownerCliHandlers[name]) return 'owner';
+  if (localCliCommands.has(name)) return 'local';
+  return null;
+}
 
 let ownerOutputCaptureInstalled = false;
 function installOwnerOutputCapture() {
