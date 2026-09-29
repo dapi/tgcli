@@ -46,7 +46,7 @@ def probe(port):
 
     return {
         "at": utc_now(),
-        "healthy": running and ipc_ready and mcp_listening and version == "2.9.0"
+        "healthy": running and ipc_ready and mcp_listening and version == "2.9.1"
         and not dialog_refresh_deferred,
         "running": running,
         "pid": pid,
@@ -79,8 +79,8 @@ def main():
 
     log_dir = Path(__file__).resolve().parents[2] / "log"
     log_dir.mkdir(mode=0o700, exist_ok=True)
-    samples_path = log_dir / "office3-monitor-2.9.0.jsonl"
-    summary_path = log_dir / "office3-monitor-2.9.0-summary.json"
+    samples_path = log_dir / "office3-monitor-2.9.1.jsonl"
+    summary_path = log_dir / "office3-monitor-2.9.1-summary.json"
     samples = os.open(samples_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     os.chmod(samples_path, 0o600)
 

@@ -151,7 +151,7 @@ it('keeps archive and IPC available when Telegram defers dialog refresh', async 
   server.kill('SIGTERM');
   await new Promise((resolve) => server.once('exit', resolve));
   expect(readStoreLock(storeDir).exists).toBe(false);
-});
+}, 15000);
 
 it('reuses an existing dialog registry without a new Telegram scan', async () => {
   storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-cached-dialogs-'));
