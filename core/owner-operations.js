@@ -113,8 +113,12 @@ export async function runOwnerOperation({ storeDir, operation, args = {}, timeou
               try { await services.messageSyncService.shutdown(); } catch (error) { cleanupError = error; }
               try { await services.telegramClient.destroy(); } catch (error) { cleanupError ??= error; }
             }
+            try {
+              ownerLock.release();
+            } catch (error) {
+              cleanupError ??= error;
+            }
             if (cleanupError) throw cleanupError;
-            ownerLock.release();
           }
         })();
         if (timeoutMs === null) return work;

@@ -775,14 +775,25 @@ function withGlobalOptions(handler) {
           else console.log(JSON.stringify(cached, null, 2));
           return;
         }
-        const result = await runOwnerOperation({
-          storeDir: resolveStoreDir(),
-          operation: 'cli.execute',
-          args: { commandPath: name, args: normalizeOwnerArgs(name, actionArgs),
-            flags: { json: globalFlags.json, timeoutMs: globalFlags.timeoutMs } },
-          timeoutMs: globalFlags.timeoutMs,
-          localHandler: configWrite ? () => handler(globalFlags, ...args) : undefined,
-        });
+        let result;
+        try {
+          result = await runOwnerOperation({
+            storeDir: resolveStoreDir(),
+            operation: 'cli.execute',
+            args: { commandPath: name, args: normalizeOwnerArgs(name, actionArgs),
+              flags: { json: globalFlags.json, timeoutMs: globalFlags.timeoutMs } },
+            timeoutMs: globalFlags.timeoutMs,
+            localHandler: configWrite ? () => handler(globalFlags, ...args) : undefined,
+          });
+        } catch (error) {
+          if (['channels show', 'metadata get', 'contacts show'].includes(name) &&
+              error.code === 'OWNER_UNAVAILABLE') {
+            const unavailable = new Error('Not in archive; store owner is unavailable for live lookup.');
+            unavailable.code = 'OWNER_UNAVAILABLE';
+            throw unavailable;
+          }
+          throw error;
+        }
         if (result == null) return;
         if (result.stderr) process.stderr.write(result.stderr);
         if (result.stdout) process.stdout.write(result.stdout);
@@ -1674,16 +1685,18 @@ async function runAuthLogout(globalFlags) {
   let release = null;
   let telegramClient = null;
   const cleanup = async () => {
+    let cleanupError;
     if (telegramClient) {
       const currentClient = telegramClient;
       telegramClient = null;
-      await currentClient.destroy();
+      try { await currentClient.destroy(); } catch (error) { cleanupError = error; }
     }
     if (release) {
       const currentRelease = release;
       release = null;
-      currentRelease();
+      try { currentRelease(); } catch (error) { cleanupError ??= error; }
     }
+    if (cleanupError) throw cleanupError;
   };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -1740,12 +1753,12 @@ async function runAuthLogin(globalFlags, options = {}) {
       telegramClient = null;
       try { await currentClient.destroy(); } catch (error) { cleanupError ??= error; }
     }
-    if (cleanupError) throw cleanupError;
     if (ownerLock) {
       const currentOwner = ownerLock;
       ownerLock = null;
-      currentOwner.release();
+      try { currentOwner.release(); } catch (error) { cleanupError ??= error; }
     }
+    if (cleanupError) throw cleanupError;
   };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
@@ -1908,7 +1921,7 @@ async function runSync(globalFlags, options = {}) {
           else writeJson({ running: true, ownerPid: current.pid });
         } else {
           const result = await runOwnerOperation({ storeDir, operation: 'sync.once',
-            args: { idleExitMs }, timeoutMs: timeoutMs ?? idleExitMs + 30000 });
+            args: { idleExitMs }, timeoutMs });
           if (globalFlags.json) writeJson({ ok: true, mode: 'once', queue: result.queue });
           else console.log('Sync complete.');
         }
@@ -1935,8 +1948,8 @@ async function runSync(globalFlags, options = {}) {
         try { await services.messageSyncService.shutdown(); } catch (error) { cleanupError ??= error; }
         try { await services.telegramClient.destroy(); } catch (error) { cleanupError ??= error; }
       }
+      try { ownerLock.release(); } catch (error) { cleanupError ??= error; }
       if (cleanupError) throw cleanupError;
-      ownerLock.release();
     };
     try {
       services = createServices({ storeDir });

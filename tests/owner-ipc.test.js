@@ -228,6 +228,9 @@ describe('private owner IPC', () => {
     const unavailable = await runCli(storeDir, ['groups', 'list']);
     expect(unavailable.code).not.toBe(0);
     expect(unavailable.stderr).toContain('Owner IPC is unavailable');
+    const uncached = await runCli(storeDir, ['channels', 'show', '--chat', '@missing']);
+    expect(uncached.code).not.toBe(0);
+    expect(uncached.stderr).toContain('Not in archive; store owner is unavailable for live lookup');
     expect(fs.existsSync(path.join(storeDir, 'session.json'))).toBe(false);
     expect(fs.existsSync(path.join(storeDir, 'messages.db'))).toBe(false);
   });

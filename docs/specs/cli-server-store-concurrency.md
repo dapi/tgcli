@@ -78,6 +78,15 @@ Implementation tests should use temporary stores and mocked Telegram clients by 
 
 ## Verification record (2026-09-29)
 
-- Unit and multi-process suite: 324 tests passed. The process tests cover concurrent CLI calls to one owner, read-only archive access during a WAL write, owner identity and protocol checks, socket permissions, stale and competing lock claims, output preservation, and refusal to create a second session when owner IPC is unavailable. A route classification test covers every runnable CLI command.
+- Unit and multi-process suite: 325 tests passed after review fixes. The process tests cover concurrent CLI calls to one owner, read-only archive access during a WAL write, owner identity and protocol checks, socket permissions, stale and competing lock claims, output preservation, and refusal to create a second session when owner IPC is unavailable. A route classification test covers every runnable CLI command. A cleanup regression test verifies that a transient claim is released when service shutdown fails.
 - A real-account archive-only `sync status` and `messages list --limit 1` succeeded without taking `LOCK`.
 - The controlled real-account server smoke did not reach IPC readiness: Telegram returned `FLOOD_WAIT_22`, then `FLOOD_WAIT_23` on one retry during `refreshChannelsFromDialogs()`. Both attempts released `LOCK`. The live server/CLI integration gate remains unverified until Telegram permits that request; no further retry was made.
+
+## Review gaps (2026-09-29)
+
+The branch is not yet ready for the integration gate:
+
+- MCP handlers and CLI IPC do not share one mutation coordinator. The current `cli.execute` queue also holds its slot across Telegram network waits.
+- IPC deadlines report an unknown result, but existing CLI handlers do not receive an operation-specific cancellation signal or expose a way to inspect the final result by request ID.
+- Live requests outside the serialized CLI bridge have no concurrency bound.
+- A crash while reclaiming a stale owner can leave `LOCK.reclaim` and block later owners until manual recovery.
