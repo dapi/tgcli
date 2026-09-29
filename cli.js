@@ -745,6 +745,9 @@ function withGlobalOptions(handler) {
       globalFlags = getGlobalFlags(command);
       const name = commandPath(command);
       const actionArgs = args.slice(0, -1);
+      if (name === 'send text' || name === 'send file') {
+        validateSendParseMode(name, actionArgs.at(-1) ?? {});
+      }
       if (name === 'auth' || name === 'auth logout') {
         const current = parseStoreLock(readStoreLock(resolveStoreDir()).info);
         if (current?.pid && isPidAlive(current.pid)) {
@@ -1404,6 +1407,15 @@ function parseSendParseMode(value) {
     throw new Error(`--parse-mode must be one of: ${SEND_PARSE_MODES.join(', ')}`);
   }
   return normalized;
+}
+
+function validateSendParseMode(commandName, options) {
+  const parseMode = parseSendParseMode(options.parseMode);
+  if (commandName === 'send file' && parseMode &&
+      !(typeof options.caption === 'string' && options.caption.trim())) {
+    throw new Error('--parse-mode requires --caption for send file');
+  }
+  return parseMode;
 }
 
 function resolveSource(source) {
@@ -3142,7 +3154,7 @@ async function runSendText(globalFlags, options = {}) {
     if (!options.message) {
       throw new Error('--message is required');
     }
-    const parseMode = parseSendParseMode(options.parseMode);
+    const parseMode = validateSendParseMode('send text', options);
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
@@ -3278,10 +3290,7 @@ async function runSendFile(globalFlags, options = {}) {
     if (!options.file) {
       throw new Error('--file is required');
     }
-    const parseMode = parseSendParseMode(options.parseMode);
-    if (parseMode && !(typeof options.caption === 'string' && options.caption.trim())) {
-      throw new Error('--parse-mode requires --caption for send file');
-    }
+    const parseMode = validateSendParseMode('send file', options);
     const storeDir = resolveStoreDir();
     const release = acquireStoreLock(storeDir);
     const { telegramClient, messageSyncService } = createServices({ storeDir });
