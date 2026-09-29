@@ -86,12 +86,53 @@ function frameReader(socket) {
   };
 }
 
+async function removeStaleOwnerSocket(socketPath) {
+  let original;
+  try {
+    original = fs.lstatSync(socketPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!original.isSocket()) {
+    throw protocolError('OWNER_UNAVAILABLE', 'Owner IPC path is not a socket');
+  }
+  await new Promise((resolve, reject) => {
+    const probe = net.createConnection(socketPath);
+    const timeout = setTimeout(() => {
+      probe.destroy();
+      reject(protocolError('OWNER_UNAVAILABLE', 'Could not verify whether owner IPC is active'));
+    }, 1000);
+    probe.once('connect', () => {
+      clearTimeout(timeout);
+      probe.destroy();
+      reject(protocolError('OWNER_UNAVAILABLE', 'Another owner IPC endpoint is active'));
+    });
+    probe.once('error', (error) => {
+      clearTimeout(timeout);
+      if (error.code === 'ECONNREFUSED' || error.code === 'ENOENT') resolve();
+      else reject(error);
+    });
+  });
+  try {
+    const current = fs.lstatSync(socketPath);
+    if (current.dev !== original.dev || current.ino !== original.ino) {
+      throw protocolError('OWNER_UNAVAILABLE', 'Owner IPC endpoint changed during recovery');
+    }
+    fs.unlinkSync(socketPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
 export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
   const identity = storeIdentity(storeDir);
   const socketPath = ownerSocketPath(storeDir);
   fs.mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
   fs.chmodSync(path.dirname(socketPath), 0o700);
-  if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
+  // The store claim rules out a compatible live owner; also probe the endpoint
+  // before removing a socket left by an owner that exited abruptly.
+  await removeStaleOwnerSocket(socketPath);
   const sockets = new Set();
   const tasks = new Set();
   const outcomes = new Map();

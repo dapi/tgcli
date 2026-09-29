@@ -49,9 +49,46 @@ it('lets another CLI live read start while one Telegram request is stalled', asy
     messageSyncService: {},
   });
   const first = operations['channels.list']({ limit: 1 }, {});
-  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(resolveFirst).toBeTypeOf('function');
   const second = operations['channels.list']({ limit: 1 }, {});
   expect(await second).toEqual([{ id: 2 }]);
   resolveFirst([{ id: 1 }]);
   expect(await first).toEqual([{ id: 1 }]);
+});
+
+it('keeps logout, sync refresh, and job authorization behind the live limit', async () => {
+  const coordinator = new OwnerCoordinator({ maxLive: 1 });
+  let releaseFirst;
+  const effects = [];
+  const operations = createOwnerOperations({
+    storeDir: '/tmp/unused-tgcli-owner-coordinator-test',
+    coordinator,
+    telegramClient: {
+      isAuthorized: async () => { effects.push('auth'); return true; },
+      listDialogs: async () => new Promise((resolve) => { releaseFirst = resolve; }),
+      client: { logout: async () => { effects.push('logout'); } },
+    },
+    messageSyncService: {
+      refreshChannelsFromDialogs: async () => { effects.push('refresh'); },
+      addJob: () => { effects.push('add'); },
+      retryJobs: () => { effects.push('retry'); return { updated: 0 }; },
+    },
+  });
+  const first = operations['channels.list']({ limit: 1 }, {});
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(releaseFirst).toBeTypeOf('function');
+  const controller = new AbortController();
+  const context = { signal: controller.signal };
+  const queued = [
+    operations['auth.logout']({}, context),
+    operations['sync.once']({}, context),
+    operations['sync.jobs.add']({ chat: '1' }, context),
+    operations['sync.jobs.retry']({ jobId: 1 }, context),
+  ];
+  controller.abort();
+  await Promise.all(queued.map((task) => expect(task).rejects.toMatchObject({ code: 'OWNER_BUSY' })));
+  expect(effects).toEqual(['auth']);
+  releaseFirst([]);
+  await first;
 });

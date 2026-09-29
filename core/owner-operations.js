@@ -22,11 +22,11 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       const me = await telegramClient.getCurrentUser();
       return { authenticated: Boolean(me), username: me?.username ?? null };
     }, context),
-    'auth.logout': async () => {
+    'auth.logout': (_, context) => coordinator.runLive(async () => {
       await telegramClient.client.logout();
       if (onAuthLogout) setTimeout(() => void onAuthLogout(), 250);
       return { loggedOut: true };
-    },
+    }, context),
     'sync.status': () => ({ queue: messageSyncService.getQueueStats(),
       dialogRefreshDeferred: getDialogRefreshDeferred() }),
     'doctor.status': ({ connect = false }, context) => coordinator.runLive(async () => {
@@ -40,7 +40,7 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       };
     }, context),
     'sync.once': async ({ idleExitMs = 30000 }, { signal }) => {
-      await messageSyncService.refreshChannelsFromDialogs();
+      await coordinator.runLive(() => messageSyncService.refreshChannelsFromDialogs(), { signal });
       onDialogsRefreshed?.();
       messageSyncService.resumePendingJobs();
       let idleSince = null;
@@ -58,20 +58,20 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       error.code = 'UNKNOWN_RESULT';
       throw error;
     },
-    'sync.jobs.add': async ({ chat, depth, minDate }) => {
+    'sync.jobs.add': ({ chat, depth, minDate }, context) => coordinator.runLive(async () => {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
       const job = messageSyncService.addJob(chat, { depth, minDate });
       void messageSyncService.processQueue();
       return job;
-    },
-    'sync.jobs.retry': async ({ jobId, channelId, allErrors }) => {
+    }, context),
+    'sync.jobs.retry': ({ jobId, channelId, allErrors }, context) => coordinator.runLive(async () => {
       const result = messageSyncService.retryJobs({ jobId, channelId, allErrors });
       const authed = await telegramClient.isAuthorized().catch(() => false);
       if (authed && result.updated > 0) void messageSyncService.processQueue();
       return result;
-    },
+    }, context),
     'sync.jobs.cancel': ({ jobId, channelId }) =>
       messageSyncService.cancelJobs({ jobId, channelId }),
     'channels.list': ({ query, limit }, context) => coordinator.runLive(async () => {

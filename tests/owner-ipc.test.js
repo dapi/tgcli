@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -82,6 +83,46 @@ describe('private owner IPC', () => {
     await stop();
     stop = null;
     expect(fs.existsSync(ownerSocketPath(storeDir))).toBe(false);
+  });
+
+  it('preserves an active socket instead of removing it during startup', async () => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-ipc-live-socket-'));
+    lock = acquireOwnerLock(storeDir, { kind: 'server', state: 'starting' });
+    const socketPath = ownerSocketPath(storeDir);
+    fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+    const blocker = net.createServer();
+    await new Promise((resolve) => blocker.listen(socketPath, resolve));
+    try {
+      await expect(startOwnerIpc({ storeDir, ownerLock: lock, operations: {} }))
+        .rejects.toMatchObject({ code: 'OWNER_UNAVAILABLE' });
+      expect(fs.existsSync(socketPath)).toBe(true);
+    } finally {
+      await new Promise((resolve) => blocker.close(resolve));
+    }
+  });
+
+  it('reclaims a socket left by a crashed owner process', async () => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-ipc-stale-socket-'));
+    lock = acquireOwnerLock(storeDir, { kind: 'server', state: 'starting' });
+    const socketPath = ownerSocketPath(storeDir);
+    fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+    const child = spawn(process.execPath, ['-e',
+      'const net = require("node:net"); net.createServer().listen(process.argv[1], () => process.stdout.write("ready"));',
+      socketPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      await new Promise((resolve, reject) => {
+        child.stdout.once('data', resolve);
+        child.once('error', reject);
+        child.once('exit', (code) => reject(new Error(`Socket owner exited early: ${code}`)));
+      });
+    } finally {
+      child.kill('SIGKILL');
+      await new Promise((resolve) => child.once('exit', resolve));
+    }
+    expect(fs.existsSync(socketPath)).toBe(true);
+    stop = await startOwnerIpc({ storeDir, ownerLock: lock,
+      operations: { echo: async () => ({ ok: true }) } });
+    expect(await callOwner({ storeDir, operation: 'echo' })).toEqual({ ok: true });
   });
 
   it('reports an unknown result after a submitted request exceeds its deadline', async () => {
