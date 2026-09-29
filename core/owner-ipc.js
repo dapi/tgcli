@@ -23,9 +23,10 @@ export function ownerSocketPath(storeDir) {
   return path.join(runtimeDir, `${name}.sock`);
 }
 
-function protocolError(code, message) {
+function protocolError(code, message, requestId = null) {
   const error = new Error(message);
   error.code = code;
+  if (requestId) error.requestId = requestId;
   return error;
 }
 
@@ -93,6 +94,17 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
   if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
   const sockets = new Set();
   const tasks = new Set();
+  const outcomes = new Map();
+  const pruneOutcomes = () => {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const [id, outcome] of outcomes) {
+      if (outcome.finishedAt && outcome.finishedAt < cutoff) outcomes.delete(id);
+    }
+    for (const [id, outcome] of outcomes) {
+      if (outcomes.size <= 1000) break;
+      if (outcome.finishedAt) outcomes.delete(id);
+    }
+  };
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.setTimeout(30000, () => socket.destroy());
@@ -111,14 +123,28 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
           typeof request.operation !== 'string' || !Number.isFinite(request.deadline)) {
         throw protocolError('INVALID_REQUEST', 'Invalid owner IPC request');
       }
-      const operation = operations[request.operation];
+      const operation = request.operation === 'owner.requestStatus'
+        ? ({ requestId }) => outcomes.get(requestId) ?? { requestId, status: 'unknown' }
+        : Object.hasOwn(operations, request.operation) ? operations[request.operation] : undefined;
       if (typeof operation !== 'function') throw protocolError('INVALID_OPERATION', 'Unknown owner operation');
       if (Date.now() >= request.deadline) throw protocolError('OWNER_BUSY', 'Owner request deadline expired');
+      const tracked = request.operation !== 'owner.requestStatus';
+      if (tracked) {
+        pruneOutcomes();
+        if (outcomes.has(request.id)) throw protocolError('INVALID_REQUEST', 'Duplicate owner request ID');
+        outcomes.set(request.id, { requestId: request.id, operation: request.operation,
+          status: 'running', startedAt: Date.now() });
+      }
       socket.setTimeout(Math.max(1000, request.deadline - Date.now() + 1000), () => socket.destroy());
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), Math.max(1, request.deadline - Date.now()));
       try {
         const result = await operation(request.args, { signal: controller.signal, requestId: request.id });
+        const outcome = tracked ? outcomes.get(request.id) : null;
+        if (outcome) {
+          outcome.status = 'completed';
+          outcome.finishedAt = Date.now();
+        }
         if (controller.signal.aborted) throw protocolError('UNKNOWN_RESULT', 'Owner request deadline expired during execution');
         const bytes = Buffer.from(JSON.stringify(result ?? null));
         for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
@@ -126,6 +152,14 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
             data: bytes.subarray(offset, offset + CHUNK_BYTES).toString('base64') });
         }
         writeFrame(socket, { type: 'complete', id: request.id });
+      } catch (error) {
+        const outcome = tracked ? outcomes.get(request.id) : null;
+        if (outcome && outcome.status === 'running') {
+          outcome.status = 'failed';
+          outcome.code = error.code || 'OPERATION_FAILED';
+          outcome.finishedAt = Date.now();
+        }
+        throw error;
       } finally {
         clearTimeout(timeout);
       }
@@ -172,9 +206,11 @@ export async function callOwner({ storeDir, operation, args, timeoutMs = 30000 }
   const readFrame = frameReader(socket);
   const deadline = Date.now() + timeoutMs;
   let requestSent = false;
+  let requestId = null;
   const timer = setTimeout(() => socket.destroy(protocolError(
     requestSent ? 'UNKNOWN_RESULT' : 'OWNER_UNAVAILABLE',
-    requestSent ? 'Owner request timed out; its result is unknown' : 'Owner IPC timed out',
+    requestSent ? `Owner request ${requestId} timed out; inspect it with tgcli owner request ${requestId}` : 'Owner IPC timed out',
+    requestId,
   )), timeoutMs);
   try {
     await new Promise((resolve, reject) => {
@@ -192,12 +228,13 @@ export async function callOwner({ storeDir, operation, args, timeoutMs = 30000 }
       throw protocolError('OWNER_UNAVAILABLE', 'Owner changed during connection');
     }
     const id = randomUUID();
+    requestId = id;
     writeFrame(socket, { type: 'request', id, operation, args, deadline });
     requestSent = true;
     const chunks = [];
     while (true) {
       const frame = await readFrame();
-      if (frame.type === 'error') throw protocolError(frame.code, frame.message);
+      if (frame.type === 'error') throw protocolError(frame.code, frame.message, id);
       if (frame.id !== id) throw protocolError('INVALID_FRAME', 'Owner IPC request ID mismatch');
       if (frame.type === 'chunk') chunks.push(Buffer.from(frame.data, 'base64'));
       else if (frame.type === 'complete') return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -205,11 +242,14 @@ export async function callOwner({ storeDir, operation, args, timeoutMs = 30000 }
     }
   } catch (error) {
     if (requestSent && ['OWNER_UNAVAILABLE', 'ECONNRESET', 'EPIPE'].includes(error.code)) {
-      throw protocolError('UNKNOWN_RESULT', 'Owner connection closed after request; its result is unknown');
+      throw protocolError('UNKNOWN_RESULT',
+        `Owner connection closed after request ${requestId}; inspect it with tgcli owner request ${requestId}`,
+        requestId);
     }
     if (!requestSent && ['ENOENT', 'ECONNREFUSED', 'ECONNRESET'].includes(error.code)) {
       throw protocolError('OWNER_UNAVAILABLE', 'Owner IPC is unavailable');
     }
+    if (requestSent && !error.requestId) error.requestId = requestId;
     throw error;
   } finally {
     clearTimeout(timer);

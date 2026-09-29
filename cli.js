@@ -34,7 +34,7 @@ import {
 import { ArchiveReader } from './core/archive-reader.js';
 import { runOwnerOperation } from './core/owner-operations.js';
 import { createOwnerOperations } from './core/owner-operations.js';
-import { startOwnerIpc } from './core/owner-ipc.js';
+import { callOwner, startOwnerIpc } from './core/owner-ipc.js';
 import {
   buildSendErrorPayload,
   buildSendSuccessPayload,
@@ -228,6 +228,11 @@ function buildProgram() {
     .command('server')
     .description('Run background sync service (MCP optional)')
     .action(withGlobalOptions((globalFlags) => runServer(globalFlags)));
+
+  program.command('owner').description('Inspect the active store owner')
+    .command('request').description('Show the outcome of an owner request')
+    .argument('<requestId>', 'Request ID shown after an uncertain result')
+    .action(withGlobalOptions((globalFlags, requestId) => runOwnerRequestStatus(globalFlags, requestId)));
 
   const service = program.command('service').description('Manage background service');
   service
@@ -865,6 +870,8 @@ function writeError(error, asJson) {
   const message = error?.message ?? String(error);
   if (asJson) {
     const payload = { ok: false, error: message };
+    if (error?.code) payload.code = error.code;
+    if (error?.requestId) payload.requestId = error.requestId;
     if (error?.retryLog?.length > 0) {
       payload.attempts = error.attempts;
       payload.retry_log = error.retryLog;
@@ -2037,6 +2044,13 @@ async function runServer(globalFlags) {
       child.kill('SIGTERM');
     }
   });
+}
+
+async function runOwnerRequestStatus(globalFlags, requestId) {
+  const result = await callOwner({ storeDir: resolveStoreDir(), operation: 'owner.requestStatus',
+    args: { requestId }, timeoutMs: globalFlags.timeoutMs ?? 30000 });
+  if (globalFlags.json) writeJson(result);
+  else console.log(`${result.requestId}: ${result.status}${result.code ? ` (${result.code})` : ''}`);
 }
 
 async function runServiceInstall(globalFlags) {
@@ -4579,6 +4593,7 @@ const localCliCommands = new Set([
   'sync jobs retry',
   'sync jobs cancel',
   'server',
+  'owner request',
   'service install',
   'service start',
   'service stop',

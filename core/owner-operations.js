@@ -2,27 +2,32 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { createServices } from './services.js';
 import { callOwner } from './owner-ipc.js';
+import { OwnerCoordinator } from './owner-coordinator.js';
 import { acquireOwnerLock, isPidAlive, parseStoreLock, readStoreLock } from '../store-lock.js';
 
-export function createOwnerOperations({ storeDir, telegramClient, messageSyncService, onAuthLogout }) {
-  let mutationTail = Promise.resolve();
-  const serialize = (handler) => (args, context) => {
-    const current = mutationTail.then(() => handler(args, context));
-    mutationTail = current.catch(() => {});
-    return current;
-  };
+let cliModulePromise;
+function loadCliModule() {
+  cliModulePromise ??= import('../cli.js').catch((error) => {
+    cliModulePromise = null;
+    throw error;
+  });
+  return cliModulePromise;
+}
+
+export function createOwnerOperations({ storeDir, telegramClient, messageSyncService, onAuthLogout,
+  coordinator = new OwnerCoordinator() }) {
   return {
-    'auth.current': async () => {
+    'auth.current': (_, context) => coordinator.runLive(async () => {
       const me = await telegramClient.getCurrentUser();
       return { authenticated: Boolean(me), username: me?.username ?? null };
-    },
-    'auth.logout': serialize(async () => {
+    }, context),
+    'auth.logout': async () => {
       await telegramClient.client.logout();
       if (onAuthLogout) setTimeout(() => void onAuthLogout(), 250);
       return { loggedOut: true };
-    }),
+    },
     'sync.status': () => ({ queue: messageSyncService.getQueueStats() }),
-    'doctor.status': async ({ connect = false }) => {
+    'doctor.status': ({ connect = false }, context) => coordinator.runLive(async () => {
       const authenticated = await telegramClient.isAuthorized().catch(() => false);
       if (connect && authenticated) await telegramClient.startUpdates();
       return {
@@ -31,7 +36,7 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
         search: messageSyncService.getSearchStatus(),
         queue: messageSyncService.getQueueStats(),
       };
-    },
+    }, context),
     'sync.once': async ({ idleExitMs = 30000 }, { signal }) => {
       await messageSyncService.refreshChannelsFromDialogs();
       messageSyncService.resumePendingJobs();
@@ -50,34 +55,34 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       error.code = 'UNKNOWN_RESULT';
       throw error;
     },
-    'sync.jobs.add': serialize(async ({ chat, depth, minDate }) => {
+    'sync.jobs.add': async ({ chat, depth, minDate }) => {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
       const job = messageSyncService.addJob(chat, { depth, minDate });
       void messageSyncService.processQueue();
       return job;
-    }),
-    'sync.jobs.retry': serialize(async ({ jobId, channelId, allErrors }) => {
+    },
+    'sync.jobs.retry': async ({ jobId, channelId, allErrors }) => {
       const result = messageSyncService.retryJobs({ jobId, channelId, allErrors });
       const authed = await telegramClient.isAuthorized().catch(() => false);
       if (authed && result.updated > 0) void messageSyncService.processQueue();
       return result;
-    }),
-    'sync.jobs.cancel': serialize(({ jobId, channelId }) =>
-      messageSyncService.cancelJobs({ jobId, channelId })),
-    'channels.list': async ({ query, limit }) => {
+    },
+    'sync.jobs.cancel': ({ jobId, channelId }) =>
+      messageSyncService.cancelJobs({ jobId, channelId }),
+    'channels.list': ({ query, limit }, context) => coordinator.runLive(async () => {
       if (!(await telegramClient.isAuthorized().catch(() => false))) {
         throw new Error('Not authenticated. Run `tgcli auth` first.');
       }
       return query
         ? telegramClient.searchDialogs(query, limit)
         : telegramClient.listDialogs(limit);
-    },
-    'cli.execute': serialize(async (request) => {
-      const { executeOwnerCliCommand } = await import('../cli.js');
+    }, context),
+    'cli.execute': (request, context) => coordinator.runLive(async () => {
+      const { executeOwnerCliCommand } = await loadCliModule();
       return executeOwnerCliCommand(request, { telegramClient, messageSyncService }, storeDir);
-    }),
+    }, context),
   };
 }
 

@@ -131,6 +131,8 @@ Message commands default to `--source archive`, which reads only the local archi
 
 The server and foreground sync processes own the writable archive and Telegram session. They expose a private local socket even when `mcp.enabled` is false. A separate CLI reads archived messages, tags, and sync jobs directly. Commands that need Telegram or change the store use the owner socket while it is running; without an owner, the CLI takes the store lock and runs them itself. `config set/unset` report when the running service needs a restart to use the new setting.
 
+If a command times out after the owner accepted it, the error includes a request ID. Check `tgcli owner request <requestId> --json` before retrying a send or another change. Request outcomes remain in the running owner's memory for one hour; a restart makes prior outcomes unknown.
+
 ## Commands
 
 ```bash
@@ -139,6 +141,7 @@ tgcli accounts       Manage isolated Telegram account profiles
 tgcli config         View and edit config
 tgcli sync           Archive backfill and realtime sync
 tgcli server         Run background sync service (MCP optional)
+tgcli owner request  Inspect a recent request after an uncertain result
 tgcli service        Install/start/stop/status/logs for background service
 tgcli channels       List/search channels
 tgcli messages       List/search messages

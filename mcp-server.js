@@ -13,6 +13,7 @@ import { resolveStoreDir } from "./core/store.js";
 import { acquireOwnerLock } from "./store-lock.js";
 import { startOwnerIpc } from "./core/owner-ipc.js";
 import { createOwnerOperations } from "./core/owner-operations.js";
+import { OwnerCoordinator } from "./core/owner-coordinator.js";
 
 const SERVICE_STATE_FILE = "service-state.json";
 
@@ -38,6 +39,7 @@ try {
   throw error;
 }
 const { telegramClient, messageSyncService } = services;
+const ownerCoordinator = new OwnerCoordinator();
 
 let telegramReady = false;
 let serviceState = null;
@@ -721,7 +723,18 @@ function createServerInstance() {
     version: "1.0.0",
   });
 
-  server.tool(
+  const archiveOnlyTools = new Set([
+    "listActiveChannels", "listChannelTags", "listTaggedChannels",
+    "getSyncedMessageStats", "listMessageSyncJobs",
+  ]);
+  const registerTool = (name, description, schema, handler) => server.tool(
+    name, description, schema,
+    (...args) => archiveOnlyTools.has(name)
+      ? handler(...args)
+      : ownerCoordinator.runLive(() => handler(...args)),
+  );
+
+  registerTool(
     "listChannels",
     "Lists available Telegram dialogs for the authenticated account.",
     listChannelsSchema,
@@ -740,7 +753,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "searchChannels",
     "Searches dialogs by title or username.",
     searchChannelsSchema,
@@ -759,7 +772,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "listActiveChannels",
     "Lists dialogs tracked in the local archive registry.",
     {},
@@ -777,7 +790,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "setChannelTags",
     "Assign tags to a channel for later cross-channel search.",
     setChannelTagsSchema,
@@ -795,7 +808,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "listChannelTags",
     "List tags attached to a channel.",
     listChannelTagsSchema,
@@ -813,7 +826,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "listTaggedChannels",
     "List channels that carry a specific tag.",
     listTaggedChannelsSchema,
@@ -831,7 +844,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "refreshChannelMetadata",
     "Fetches and caches extended metadata for channels.",
     refreshChannelMetadataSchema,
@@ -855,7 +868,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "getChannelMetadata",
     "Returns cached metadata for a channel.",
     getChannelMetadataSchema,
@@ -873,7 +886,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "autoTagChannels",
     "Auto-tags channels based on title, username, and cached metadata.",
     autoTagChannelsSchema,
@@ -897,7 +910,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "topicsList",
     "Lists forum topics for a supergroup.",
     topicsListSchema,
@@ -949,7 +962,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "topicsSearch",
     "Searches forum topics by title.",
     topicsSearchSchema,
@@ -986,7 +999,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesList",
     "Lists messages from the archive or live Telegram API.",
     messagesListSchema,
@@ -1063,7 +1076,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesGet",
     "Fetches a specific message from the archive or live Telegram API.",
     messagesGetSchema,
@@ -1122,7 +1135,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesContext",
     "Returns surrounding messages for a target message.",
     messagesContextSchema,
@@ -1205,7 +1218,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesSearch",
     "Searches messages across the archive or live Telegram API.",
     messagesSearchSchema,
@@ -1347,7 +1360,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesSend",
     "Sends a text message to a channel or chat.",
     messagesSendSchema,
@@ -1373,7 +1386,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "messagesSendFile",
     "Sends a file with an optional caption.",
     messagesSendFileSchema,
@@ -1403,7 +1416,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "mediaDownload",
     "Downloads media from a message to a local file.",
     mediaDownloadSchema,
@@ -1424,7 +1437,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsSearch",
     "Searches contacts/users with aliases, tags, and notes.",
     contactsSearchSchema,
@@ -1444,7 +1457,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsGet",
     "Returns a contact profile from the local store.",
     contactsGetSchema,
@@ -1471,7 +1484,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsAliasSet",
     "Sets an alias for a contact.",
     contactsAliasSetSchema,
@@ -1489,7 +1502,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsAliasRemove",
     "Removes alias for a contact.",
     contactsAliasRemoveSchema,
@@ -1507,7 +1520,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsTagsAdd",
     "Adds tags to a contact.",
     contactsTagsAddSchema,
@@ -1525,7 +1538,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsTagsRemove",
     "Removes tags from a contact.",
     contactsTagsRemoveSchema,
@@ -1543,7 +1556,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "contactsNotesSet",
     "Sets notes for a contact.",
     contactsNotesSetSchema,
@@ -1561,7 +1574,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsList",
     "Lists group chats and supergroups.",
     groupsListSchema,
@@ -1580,7 +1593,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsInfo",
     "Fetches group information and metadata.",
     groupsInfoSchema,
@@ -1599,7 +1612,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsRename",
     "Renames a group chat or supergroup.",
     groupsRenameSchema,
@@ -1618,7 +1631,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsMembersAdd",
     "Adds members to a group.",
     groupsMembersAddSchema,
@@ -1637,7 +1650,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsMembersRemove",
     "Removes members from a group.",
     groupsMembersRemoveSchema,
@@ -1656,7 +1669,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsInviteLinkGet",
     "Gets the primary invite link for a group.",
     groupsInviteLinkGetSchema,
@@ -1675,7 +1688,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsInviteLinkRevoke",
     "Revokes the primary invite link for a group.",
     groupsInviteLinkRevokeSchema,
@@ -1695,7 +1708,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsJoin",
     "Joins a group using an invite link or code.",
     groupsJoinSchema,
@@ -1723,7 +1736,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "groupsLeave",
     "Leaves a group chat or channel.",
     groupsLeaveSchema,
@@ -1742,7 +1755,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "scheduleMessageSync",
     "Schedules a background job to archive channel messages locally.",
     scheduleMessageSyncSchema,
@@ -1762,7 +1775,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "getSyncedMessageStats",
     "Returns summary statistics for stored messages in a channel.",
     {
@@ -1787,7 +1800,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "listMessageSyncJobs",
     "Lists tracked message sync jobs and their current status.",
     {},
@@ -1807,7 +1820,7 @@ function createServerInstance() {
 
   // --- Folder tools ---
 
-  server.tool(
+  registerTool(
     "listFolders",
     "Lists all Telegram chat folders for the authenticated account.",
     {},
@@ -1820,7 +1833,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "showFolder",
     "Shows detailed information about a specific chat folder.",
     folderIdOrNameSchema,
@@ -1833,7 +1846,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "createFolder",
     "Creates a new Telegram chat folder with specified filters and peers.",
     createFolderSchema,
@@ -1846,7 +1859,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "editFolder",
     "Edits an existing Telegram chat folder.",
     editFolderSchema,
@@ -1859,7 +1872,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "deleteFolder",
     "Deletes a Telegram chat folder.",
     folderIdOrNameSchema,
@@ -1872,7 +1885,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "reorderFolders",
     "Reorders Telegram chat folders.",
     reorderFoldersSchema,
@@ -1885,7 +1898,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "addChatToFolder",
     "Adds a chat to a Telegram chat folder.",
     folderChatSchema,
@@ -1898,7 +1911,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "removeChatFromFolder",
     "Removes a chat from a Telegram chat folder.",
     folderChatSchema,
@@ -1911,7 +1924,7 @@ function createServerInstance() {
     },
   );
 
-  server.tool(
+  registerTool(
     "joinChatlist",
     "Joins a shared Telegram chat folder via invite link.",
     joinChatlistSchema,
@@ -2111,7 +2124,8 @@ await initializeTelegram().then(async () => {
     storeDir,
     ownerLock,
     operations: createOwnerOperations({ storeDir, telegramClient, messageSyncService,
-      onAuthLogout: () => shutdown().finally(() => process.exit(0)) }),
+      onAuthLogout: () => shutdown().finally(() => process.exit(0)),
+      coordinator: ownerCoordinator }),
   });
 }).catch(async (error) => {
   console.error(`[startup] Telegram initialization failed: ${error?.message ?? error}`);

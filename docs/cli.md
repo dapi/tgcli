@@ -45,6 +45,10 @@ under `<base-store>/accounts/<id>`.
 - server
   - Start the background sync service and private CLI socket (MCP HTTP server runs only when enabled in config).
 
+## owner
+- owner request <requestId>
+  - Inspect a recent accepted owner's request after `UNKNOWN_RESULT`; statuses are `running`, `completed`, `failed`, or `unknown`.
+
 ## service
 - service install
 - service start

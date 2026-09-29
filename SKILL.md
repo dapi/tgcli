@@ -54,6 +54,7 @@ tgcli auth
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
 - `--source archive` reads only the local archive, including when no result is found. Use `--source live` to query Telegram or `--source both` to combine them.
 - With `tgcli server` or `tgcli sync --follow` running, archive message reads, cached tags, and `sync jobs list` use read-only SQLite. Live reads and commands that change the store use the owner's private local socket even if MCP is disabled. Without an owner, the CLI claims the store itself for those commands. A live owner whose socket is unavailable must be fixed or stopped before retrying an owner-dependent command; the CLI does not open a second session.
+- If a live command reports `UNKNOWN_RESULT`, do not retry a send or other non-idempotent change blindly. Use the returned `requestId` with `tgcli owner request <requestId> --json` while the same owner is running; inspect the chat or archive before retrying if the request is still running or its outcome is unknown.
 - Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
@@ -323,6 +324,14 @@ tgcli sync jobs cancel --channel <id|@username> --json --timeout 30s
 ```
 
 Do not write `tgcli sync --chat ...`; queue work with `sync jobs add --chat ...`, then process it with `tgcli sync --once` or `tgcli sync --follow`.
+
+### Owner Request Outcome
+
+```bash
+tgcli owner request <requestId> --json --timeout 30s
+```
+
+The active owner retains recent request outcomes in memory. `completed` means its handler finished successfully; `failed` includes an error code. `running` means it has not finished, and `unknown` means the active owner has no record (for example, after a restart).
 
 ### Service (Background Sync Daemon)
 

@@ -60,6 +60,9 @@ describe('private owner IPC', () => {
     await expect(callOwner({ storeDir, operation: 'not-allowed' })).rejects.toMatchObject({
       code: 'INVALID_OPERATION',
     });
+    await expect(callOwner({ storeDir, operation: 'toString' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    });
 
     const saved = readStoreLock(storeDir).info;
     fs.writeFileSync(path.join(storeDir, 'LOCK'), JSON.stringify({
@@ -84,14 +87,36 @@ describe('private owner IPC', () => {
   it('reports an unknown result after a submitted request exceeds its deadline', async () => {
     storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-ipc-timeout-'));
     lock = acquireOwnerLock(storeDir, { kind: 'server', state: 'starting' });
+    let releaseSlow;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
     stop = await startOwnerIpc({
       storeDir,
       ownerLock: lock,
-      operations: { slow: async () => { await new Promise((resolve) => setTimeout(resolve, 100)); return true; } },
+      operations: { slow: async () => {
+        markStarted();
+        await new Promise((resolve) => { releaseSlow = resolve; });
+        return true;
+      } },
     });
-    await expect(callOwner({ storeDir, operation: 'slow', timeoutMs: 20 })).rejects.toMatchObject({
-      code: 'UNKNOWN_RESULT',
-    });
+    const pending = callOwner({ storeDir, operation: 'slow', timeoutMs: 500 })
+      .then(() => ({ completed: true }), (error) => ({ error }));
+    let requestId;
+    try {
+      expect(await Promise.race([started.then(() => 'started'), pending.then(() => 'finished')]))
+        .toBe('started');
+      const { error } = await pending;
+      expect(error?.code).toBe('UNKNOWN_RESULT');
+      requestId = error.requestId;
+      expect(requestId).toBeTruthy();
+      expect((await callOwner({ storeDir, operation: 'owner.requestStatus',
+        args: { requestId } })).status).toBe('running');
+    } finally {
+      releaseSlow?.();
+    }
+    const status = await runCli(storeDir, ['owner', 'request', requestId]);
+    expect(status.code, status.stderr).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({ requestId, operation: 'slow', status: 'completed' });
   });
 
   it('routes two CLI processes to the owner without opening local services', async () => {
