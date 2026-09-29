@@ -75,6 +75,52 @@ describe('server store ownership', () => {
     expect(fs.existsSync(path.join(storeDir, 'LOCK.reclaim'))).toBe(false);
   });
 
+  it('recovers after a previous reclaimer crashes', () => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-reclaim-'));
+    fs.writeFileSync(path.join(storeDir, 'LOCK'), JSON.stringify({
+      pid: 2147483647,
+      ownerId: 'dead-owner',
+    }));
+    fs.writeFileSync(path.join(storeDir, 'LOCK.reclaim'), JSON.stringify({
+      pid: 2147483647,
+    }));
+
+    owner = acquireOwnerLock(storeDir, { kind: 'server', state: 'starting' });
+
+    expect(owner.info.ownerId).not.toBe('dead-owner');
+    expect(fs.existsSync(path.join(storeDir, 'LOCK.reclaim'))).toBe(false);
+  });
+
+  it('releases the ownership guard after an abrupt process exit', async () => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-crash-'));
+    const lockModule = fileURLToPath(new URL('../store-lock.js', import.meta.url));
+    const script = `
+      import { acquireOwnerLock } from ${JSON.stringify(lockModule)};
+      acquireOwnerLock(process.argv[1], { kind: 'server', state: 'ready' });
+      process.stdout.write('ready\\n');
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, storeDir], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    try {
+      await new Promise((resolve, reject) => {
+        child.stdout.once('data', resolve);
+        child.once('error', reject);
+        child.once('exit', (code) => reject(new Error(`Owner exited before ready: ${code}`)));
+      });
+      expect(() => acquireOwnerLock(storeDir)).toThrow('Store is locked by another process');
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await new Promise((resolve) => child.once('exit', resolve));
+      }
+    }
+
+    owner = acquireOwnerLock(storeDir, { kind: 'server', state: 'starting' });
+    expect(owner.info.ownerId).toBeTruthy();
+  });
+
   it('allows only one simultaneous process to claim a free store', async () => {
     storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-race-'));
     const lockModule = fileURLToPath(new URL('../store-lock.js', import.meta.url));

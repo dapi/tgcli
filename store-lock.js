@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import Database from 'better-sqlite3';
 
 function lockPayload(options = {}) {
   return {
@@ -106,66 +107,51 @@ export function acquireOwnerLock(storeDir, options = {}) {
     protocolVersion: options.protocolVersion ?? 1,
     socketPath: options.socketPath ?? null,
   });
+  // This independent SQLite transaction is the lifetime ownership guard. The OS
+  // releases it after an abrupt exit, so stale metadata cannot strand the store.
+  const guardPath = path.join(storeDir, 'LOCK.guard.db');
+  const guard = new Database(guardPath, { timeout: 0 });
+  fs.chmodSync(guardPath, 0o600);
+  let guardHeld = false;
+  try {
+    try {
+      guard.exec('BEGIN IMMEDIATE');
+      guardHeld = true;
+    } catch (error) {
+      if (error.code === 'SQLITE_BUSY') {
+        throw new Error('Store is locked by another process');
+      }
+      throw error;
+    }
 
-  const claim = () => {
-    if (fs.existsSync(`${lockPath}.reclaim`)) {
-      throw new Error('Store lock recovery is already in progress');
+    const reclaimPath = `${lockPath}.reclaim`;
+    if (fs.existsSync(reclaimPath)) {
+      const reclaimPid = parseLockPid(fs.readFileSync(reclaimPath, 'utf8'));
+      if (!reclaimPid || isPidAlive(reclaimPid)) {
+        throw new Error('Store lock recovery is already in progress');
+      }
+      removeStaleLockFile(reclaimPath, reclaimPid, 'recovery lock');
+    }
+
+    const current = readStoreLock(storeDir);
+    if (current.exists) {
+      const pid = parseLockPid(current.info);
+      if (!pid || isPidAlive(pid)) {
+        const extra = current.info ? ` (${current.info})` : '';
+        throw new Error(`Store is locked by another process${extra}`);
+      }
+      removeStaleLockFile(lockPath, pid, 'store lock');
     }
     const fd = fs.openSync(lockPath, 'wx', 0o600);
     try {
       fs.writeFileSync(fd, JSON.stringify(details));
-      if (fs.existsSync(`${lockPath}.reclaim`)) {
-        throw new Error('Store lock recovery is already in progress');
-      }
-    } catch (error) {
-      fs.unlinkSync(lockPath);
-      throw error;
     } finally {
       fs.closeSync(fd);
     }
-  };
-
-  try {
-    claim();
   } catch (error) {
-    if (error.code === 'EEXIST') {
-      const info = readStoreLock(storeDir);
-      const pid = parseLockPid(info.info);
-      if (pid && !isPidAlive(pid)) {
-        const reclaimPath = `${lockPath}.reclaim`;
-        let reclaimFd;
-        try {
-          reclaimFd = fs.openSync(reclaimPath, 'wx', 0o600);
-        } catch (reclaimError) {
-          if (reclaimError?.code === 'EEXIST') {
-            throw new Error('Store lock recovery is already in progress');
-          }
-          throw reclaimError;
-        }
-        try {
-          fs.writeFileSync(reclaimFd, JSON.stringify(lockPayload()));
-          const current = readStoreLock(storeDir);
-          if (current.info !== info.info) {
-            throw new Error('Store lock changed during recovery');
-          }
-          removeStaleLockFile(lockPath, pid, 'store lock');
-          const fd = fs.openSync(lockPath, 'wx', 0o600);
-          try {
-            fs.writeFileSync(fd, JSON.stringify(details));
-          } finally {
-            fs.closeSync(fd);
-          }
-        } finally {
-          fs.closeSync(reclaimFd);
-          fs.unlinkSync(reclaimPath);
-        }
-      } else {
-        const extra = info.info ? ` (${info.info})` : '';
-        throw new Error(`Store is locked by another process${extra}`);
-      }
-    } else {
-      throw error;
-    }
+    if (guardHeld) guard.exec('ROLLBACK');
+    guard.close();
+    throw error;
   }
 
   let released = false;
@@ -188,16 +174,16 @@ export function acquireOwnerLock(storeDir, options = {}) {
     if (released) {
       return;
     }
-    const current = parseStoreLock(readStoreLock(storeDir).info);
-    if (current?.ownerId !== ownerId) throw new Error('Store lock ownership changed');
     try {
+      const current = parseStoreLock(readStoreLock(storeDir).info);
+      if (current?.ownerId !== ownerId) throw new Error('Store lock ownership changed');
       fs.unlinkSync(lockPath);
-      released = true;
     } catch (error) {
-      if (error.code !== 'ENOENT') {
-        throw error;
-      }
+      if (error.code !== 'ENOENT') throw error;
+    } finally {
       released = true;
+      guard.exec('ROLLBACK');
+      guard.close();
     }
   };
   return { info: details, update, release };
