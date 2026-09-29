@@ -73,6 +73,8 @@ under `<base-store>/accounts/<id>`.
 - messages show --chat <id> --id <msgId> [--source]
 - messages context --chat <id> --id <msgId> [--before N] [--after N] [--source]
 
+The default `--source archive` uses only the local archive. An empty result does not trigger a Telegram request; choose `--source live` or `--source both` explicitly when needed.
+
 ## send
 - send text --to <id|username> --message "..." [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--no-preview] [--silent] [--no-forwards] [--schedule <iso>]
 - send photo --to <id|username> --photo PATH [--caption] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--retries <n>] [--retry-backoff <ms|constant|linear|exponential>]

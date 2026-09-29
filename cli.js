@@ -18,6 +18,7 @@ import {
 } from './core/accounts.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
+import { ArchiveReader } from './core/archive-reader.js';
 import {
   buildSendErrorPayload,
   buildSendSuccessPayload,
@@ -704,40 +705,6 @@ function collectOption(value, previous) {
   return previous.concat([value]);
 }
 
-function supportsColorOutput() {
-  if (process.env.NO_COLOR) {
-    return false;
-  }
-  return Boolean(process.stdout.isTTY);
-}
-
-function colorizeNote(message) {
-  if (!supportsColorOutput()) {
-    return message;
-  }
-  return `\x1b[33m${message}\x1b[0m`;
-}
-
-function printArchiveFallbackNote(channelIds) {
-  if (!channelIds?.length) {
-    return;
-  }
-  const prefix = 'Note:';
-  if (channelIds.length === 1) {
-    const id = channelIds[0];
-    const message = `${prefix} no archived messages for ${id}. Showing live results. ` +
-      `To archive: tgcli channels sync --chat ${id} --enable; ` +
-      `tgcli sync jobs add --chat ${id}; ` +
-      'tgcli sync --once (or --follow).';
-    console.log(colorizeNote(message));
-    return;
-  }
-  const message = `${prefix} no archived messages for chats: ${channelIds.join(', ')}. ` +
-    'Showing live results. To archive: tgcli channels sync --chat <id> --enable; ' +
-    'tgcli sync jobs add --chat <id>; tgcli sync --once (or --follow).';
-  console.log(colorizeNote(message));
-}
-
 function parseDuration(value) {
   if (typeof value !== 'string' || !value.trim()) {
     return null;
@@ -1244,6 +1211,40 @@ function resolveSource(source) {
     throw new Error(`Invalid source: ${source}`);
   }
   return resolved;
+}
+
+function openMessageCommandServices(storeDir, source) {
+  if (source === 'archive') {
+    const messageSyncService = new ArchiveReader(storeDir);
+    return {
+      telegramClient: null,
+      messageSyncService,
+      close: async () => messageSyncService.close(),
+    };
+  }
+
+  const release = acquireReadLock(storeDir);
+  try {
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    return {
+      telegramClient,
+      messageSyncService,
+      close: async () => {
+        try {
+          await messageSyncService.shutdown();
+        } finally {
+          try {
+            await telegramClient.destroy();
+          } finally {
+            release();
+          }
+        }
+      },
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 function parseDateMs(value, label) {
@@ -2475,17 +2476,15 @@ async function runMessagesList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const resolvedSource = resolveSource(options.source);
+    const { telegramClient, messageSyncService, close } = openMessageCommandServices(storeDir, resolvedSource);
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
-      const resolvedSource = resolveSource(options.source);
       const channelIds = parseListValues(options.chat);
       const topicId = parsePositiveInt(options.topic, '--topic');
       const finalLimit = parsePositiveInt(options.limit, '--limit') ?? 50;
       let archivedResults = [];
       let liveResults = [];
-      let usedLiveFallback = false;
       let authChecked = false;
 
       const ensureAuthorized = async () => {
@@ -2547,16 +2546,11 @@ async function runMessagesList(globalFlags, options = {}) {
         liveResults = await fetchLiveMessages(channelIds);
       }
 
-      if (resolvedSource === 'archive' && archivedResults.length === 0 && channelIds.length) {
-        liveResults = await fetchLiveMessages(channelIds);
-        usedLiveFallback = true;
-      }
-
       let messages = [];
       let outputSource = resolvedSource;
       if (resolvedSource === 'both') {
         messages = mergeMessageSets([archivedResults, liveResults], finalLimit);
-      } else if (resolvedSource === 'live' || usedLiveFallback) {
+      } else if (resolvedSource === 'live') {
         messages = liveResults;
         outputSource = 'live';
       } else {
@@ -2581,14 +2575,9 @@ async function runMessagesList(globalFlags, options = {}) {
             console.log('');
           }
         }
-        if (usedLiveFallback) {
-          printArchiveFallbackNote(channelIds);
-        }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      await close();
     }
   }, timeoutMs);
 }
@@ -2597,12 +2586,11 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const resolvedSource = resolveSource(options.source);
+    const { telegramClient, messageSyncService, close } = openMessageCommandServices(storeDir, resolvedSource);
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
       const query = options.query || (queryParts || []).join(' ').trim();
-      const resolvedSource = resolveSource(options.source);
       const channelIds = parseListValues(options.chat);
       const tagList = [
         ...parseListValues(options.tag),
@@ -2618,7 +2606,6 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
 
       let archivedResults = [];
       let liveResults = [];
-      let usedLiveFallback = false;
       let authChecked = false;
 
       const ensureAuthorized = async () => {
@@ -2723,19 +2710,11 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
         liveResults = await fetchLiveResults(liveChannelIds);
       }
 
-      if (resolvedSource === 'archive' && archivedResults.length === 0) {
-        const liveChannelIds = buildLiveChannelIds();
-        if (liveChannelIds.length) {
-          liveResults = await fetchLiveResults(liveChannelIds);
-          usedLiveFallback = true;
-        }
-      }
-
       let messages = [];
       let outputSource = resolvedSource;
       if (resolvedSource === 'both') {
         messages = mergeMessageSets([archivedResults, liveResults], finalLimit);
-      } else if (resolvedSource === 'live' || usedLiveFallback) {
+      } else if (resolvedSource === 'live') {
         messages = liveResults;
         outputSource = 'live';
       } else {
@@ -2760,14 +2739,9 @@ async function runMessagesSearch(globalFlags, queryParts, options = {}) {
             console.log('');
           }
         }
-        if (usedLiveFallback) {
-          printArchiveFallbackNote(buildLiveChannelIds());
-        }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      await close();
     }
   }, timeoutMs);
 }
@@ -2782,15 +2756,13 @@ async function runMessagesShow(globalFlags, options = {}) {
       throw new Error('--id is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const resolvedSource = resolveSource(options.source);
+    const { telegramClient, messageSyncService, close } = openMessageCommandServices(storeDir, resolvedSource);
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
       const messageId = parsePositiveInt(options.id, '--id');
-      const resolvedSource = resolveSource(options.source);
       let message = null;
       let resolvedFrom = null;
-      let usedLiveFallback = false;
 
       if (resolvedSource === 'live' || resolvedSource === 'both') {
         if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -2818,22 +2790,6 @@ async function runMessagesShow(globalFlags, options = {}) {
         }
       }
 
-      if (!message && resolvedSource === 'archive') {
-        if (!(await telegramClient.isAuthorized().catch(() => false))) {
-          throw new Error('Not authenticated. Run `node cli.js auth` first.');
-        }
-        const live = await telegramClient.getMessageById(options.chat, messageId);
-        if (live) {
-          const meta = await resolveLiveMetadata(options.chat);
-          message = {
-            ...formatLiveMessage(live, { channelId: String(options.chat), ...meta }),
-            source: 'live',
-          };
-          resolvedFrom = 'live';
-          usedLiveFallback = true;
-        }
-      }
-
       if (!message) {
         throw new Error('Message not found.');
       }
@@ -2843,14 +2799,9 @@ async function runMessagesShow(globalFlags, options = {}) {
         writeJson(payload);
       } else {
         console.log(JSON.stringify(payload, null, 2));
-        if (usedLiveFallback) {
-          printArchiveFallbackNote([options.chat]);
-        }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      await close();
     }
   }, timeoutMs);
 }
@@ -2865,17 +2816,15 @@ async function runMessagesContext(globalFlags, options = {}) {
       throw new Error('--id is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const resolvedSource = resolveSource(options.source);
+    const { telegramClient, messageSyncService, close } = openMessageCommandServices(storeDir, resolvedSource);
     const resolveLiveMetadata = createLiveMetadataResolver(messageSyncService, telegramClient);
     try {
       const messageId = parsePositiveInt(options.id, '--id');
-      const resolvedSource = resolveSource(options.source);
       const safeBefore = parseNonNegativeInt(options.before, '--before') ?? 20;
       const safeAfter = parseNonNegativeInt(options.after, '--after') ?? 20;
       let context = null;
       let resolvedFrom = null;
-      let usedLiveFallback = false;
 
       if (resolvedSource === 'live' || resolvedSource === 'both') {
         if (!(await telegramClient.isAuthorized().catch(() => false))) {
@@ -2922,35 +2871,6 @@ async function runMessagesContext(globalFlags, options = {}) {
         }
       }
 
-      if (!context && resolvedSource === 'archive') {
-        if (!(await telegramClient.isAuthorized().catch(() => false))) {
-          throw new Error('Not authenticated. Run `node cli.js auth` first.');
-        }
-        const liveContext = await telegramClient.getMessageContext(options.chat, messageId, {
-          before: safeBefore,
-          after: safeAfter,
-        });
-        if (liveContext.target) {
-          const meta = await resolveLiveMetadata(options.chat);
-          context = {
-            target: {
-              ...formatLiveMessage(liveContext.target, { channelId: String(options.chat), ...meta }),
-              source: 'live',
-            },
-            before: liveContext.before.map((message) => ({
-              ...formatLiveMessage(message, { channelId: String(options.chat), ...meta }),
-              source: 'live',
-            })),
-            after: liveContext.after.map((message) => ({
-              ...formatLiveMessage(message, { channelId: String(options.chat), ...meta }),
-              source: 'live',
-            })),
-          };
-          resolvedFrom = 'live';
-          usedLiveFallback = true;
-        }
-      }
-
       if (!context) {
         throw new Error('Message not found.');
       }
@@ -2960,14 +2880,9 @@ async function runMessagesContext(globalFlags, options = {}) {
         writeJson(payload);
       } else {
         console.log(JSON.stringify(payload, null, 2));
-        if (usedLiveFallback) {
-          printArchiveFallbackNote([options.chat]);
-        }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      await close();
     }
   }, timeoutMs);
 }

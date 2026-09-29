@@ -127,6 +127,8 @@ tgcli groups requests list --chat @group --json --timeout 30s
 tgcli server
 ```
 
+Message commands default to `--source archive`, which reads only the local archive and returns an empty or not-found result on a cache miss. Use `--source live` to request Telegram data, or `--source both` to combine archive and live results.
+
 ## Commands
 
 ```bash

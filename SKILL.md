@@ -50,8 +50,9 @@ tgcli auth
 - If `tgcli` is not found, install it: `npm install -g @dapi/tgcli` then run `tgcli auth` for first-time login.
 - `tgcli auth` only authenticates the Telegram session. Use `tgcli sync --once` or `tgcli sync --follow` to seed/archive dialogs.
 - Always add `--json` for agent workflows.
-- Add `--timeout 30s` by default; use `--timeout 90s` for heavy archive fallback reads.
+- Add `--timeout 30s` by default; use `--timeout 90s` for heavy live reads.
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
+- `--source archive` reads only the local archive, including when no result is found. Use `--source live` to query Telegram or `--source both` to combine them.
 - Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
@@ -132,6 +133,8 @@ tgcli messages list --chat <id|@username> --chat <id2> --limit 50 --source archi
 tgcli messages list --chat <id|@username> --topic <topicId> --after 2025-01-01T00:00:00Z --limit 100 --source archive --json --timeout 30s
 tgcli messages show --chat <id|@username> --id <msgId> --source archive --json --timeout 30s
 tgcli messages context --chat <id|@username> --id <msgId> --before 5 --after 5 --source archive --json --timeout 30s
+tgcli messages list --chat <id|@username> --limit 50 --source live --json --timeout 90s
+tgcli messages list --chat <id|@username> --limit 50 --source both --json --timeout 90s
 ```
 
 Never use `--since` here; the correct flag is `--after`.
