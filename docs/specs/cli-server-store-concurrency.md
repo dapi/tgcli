@@ -75,3 +75,9 @@ Each phase is a reviewable commit; continue only after its gate passes.
 5. **Verify integration.** Run unit and multi-process tests, then a controlled manual smoke with the selected account: server with MCP disabled, `sync --follow`, standalone CLI, concurrent archive and live reads, job progress, media paths, and orderly/abrupt shutdown. Avoid creating extra Telegram sessions during the smoke. Gate: observed behavior matches the table and ADR; record results and update ADR status only after Danil reviews the decision.
 
 Implementation tests should use temporary stores and mocked Telegram clients by default. Manual Telegram checks must be narrow enough to avoid unnecessary API calls and rate limits.
+
+## Verification record (2026-09-29)
+
+- Unit and multi-process suite: 323 tests passed. The process tests cover concurrent CLI calls to one owner, read-only archive access during a WAL write, owner identity and protocol checks, socket permissions, stale and competing lock claims, output preservation, and refusal to create a second session when owner IPC is unavailable.
+- A real-account archive-only `sync status` and `messages list --limit 1` succeeded without taking `LOCK`.
+- The controlled real-account server smoke did not reach IPC readiness: Telegram returned `FLOOD_WAIT_22`, then `FLOOD_WAIT_23` on one retry during `refreshChannelsFromDialogs()`. Both attempts released `LOCK`. The live server/CLI integration gate remains unverified until Telegram permits that request; no further retry was made.

@@ -155,11 +155,16 @@ describe('private owner IPC', () => {
 
   it('reports an empty archive when no owner or database exists', async () => {
     storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-ipc-offline-'));
-    const status = await runCli(storeDir, ['sync', 'status']);
+    const [status, doctor] = await Promise.all([
+      runCli(storeDir, ['sync', 'status']),
+      runCli(storeDir, ['doctor']),
+    ]);
     expect(status.code, status.stderr).toBe(0);
+    expect(doctor.code, doctor.stderr).toBe(0);
     expect(JSON.parse(status.stdout).queue).toEqual({
       pending: 0, in_progress: 0, idle: 0, error: 0, processing: false,
     });
+    expect(JSON.parse(doctor.stdout).authenticated).toBeNull();
     expect(fs.existsSync(path.join(storeDir, 'messages.db'))).toBe(false);
   });
 

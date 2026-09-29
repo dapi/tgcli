@@ -2478,49 +2478,56 @@ async function runDoctor(globalFlags, options = {}) {
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
     const lock = readStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      let authenticated = false;
-      let connected = false;
+    const owner = parseStoreLock(lock.info);
+    const ownerAlive = owner?.pid && isPidAlive(owner.pid);
+    let details;
+    if (options.connect || ownerAlive && owner.state === 'ready' && owner.socketPath) {
       try {
-        authenticated = await telegramClient.isAuthorized();
-        if (options.connect && authenticated) {
-          await telegramClient.startUpdates();
-          connected = true;
-        }
+        details = await runOwnerOperation({ storeDir, operation: 'doctor.status',
+          args: { connect: Boolean(options.connect) }, timeoutMs: timeoutMs ?? 30000 });
       } catch (error) {
-        authenticated = false;
+        if (options.connect || !['OWNER_UNAVAILABLE', 'OWNER_STARTING', 'UNKNOWN_RESULT'].includes(error.code)) throw error;
       }
-
-      const search = messageSyncService.getSearchStatus();
-      const queue = messageSyncService.getQueueStats();
-
-      const payload = {
-        storeDir,
-        lockHeld: lock.exists,
-        lockInfo: lock.info,
-        authenticated,
-        connected,
-        ftsEnabled: search.enabled,
-        ftsVersion: search.version,
-        queue,
-      };
-
-      if (globalFlags.json) {
-        writeJson(payload);
-        return;
-      }
-
-      console.log(`STORE: ${payload.storeDir}`);
-      console.log(`LOCKED: ${payload.lockHeld}${payload.lockInfo ? ` (${payload.lockInfo})` : ''}`);
-      console.log(`AUTHENTICATED: ${payload.authenticated}`);
-      console.log(`CONNECTED: ${payload.connected}`);
-      console.log(`FTS: ${payload.ftsEnabled}${payload.ftsVersion ? ` (v${payload.ftsVersion})` : ''}`);
-      console.log(`QUEUE: pending=${queue.pending} in_progress=${queue.in_progress} idle=${queue.idle} error=${queue.error}`);
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
     }
+    if (!details) {
+      let reader;
+      let search = { enabled: null, version: null };
+      let queue = { pending: 0, in_progress: 0, idle: 0, error: 0, processing: ownerAlive ? null : false };
+      try {
+        reader = new ArchiveReader(storeDir);
+        search = reader.getSearchStatus();
+        queue = reader.getQueueStats();
+        if (ownerAlive) queue.processing = null;
+      } catch (error) {
+        if (error.name !== 'ArchiveUnavailableError' || error.cause?.code !== 'SQLITE_CANTOPEN') throw error;
+      } finally {
+        reader?.close();
+      }
+      details = { authenticated: null, connected: null, search, queue };
+    }
+
+    const payload = {
+      storeDir,
+      lockHeld: lock.exists,
+      lockInfo: lock.info,
+      authenticated: details.authenticated,
+      connected: details.connected,
+      ftsEnabled: details.search.enabled,
+      ftsVersion: details.search.version,
+      queue: details.queue,
+    };
+
+    if (globalFlags.json) {
+      writeJson(payload);
+      return;
+    }
+
+    console.log(`STORE: ${payload.storeDir}`);
+    console.log(`LOCKED: ${payload.lockHeld}${payload.lockInfo ? ` (${payload.lockInfo})` : ''}`);
+    console.log(`AUTHENTICATED: ${payload.authenticated ?? 'unknown'}`);
+    console.log(`CONNECTED: ${payload.connected ?? 'unknown'}`);
+    console.log(`FTS: ${payload.ftsEnabled}${payload.ftsVersion ? ` (v${payload.ftsVersion})` : ''}`);
+    console.log(`QUEUE: pending=${payload.queue.pending} in_progress=${payload.queue.in_progress} idle=${payload.queue.idle} error=${payload.queue.error}`);
   }, timeoutMs);
 }
 
@@ -4493,7 +4500,6 @@ const ownerCliHandlers = {
   'auth status': runAuthStatus,
   'config set': runConfigSet,
   'config unset': runConfigUnset,
-  'doctor': runDoctor,
   'channels show': runChannelsShow,
   'channels sync': runChannelsSync,
   'messages list': runMessagesList,

@@ -22,6 +22,16 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
       return { loggedOut: true };
     }),
     'sync.status': () => ({ queue: messageSyncService.getQueueStats() }),
+    'doctor.status': async ({ connect = false }) => {
+      const authenticated = await telegramClient.isAuthorized().catch(() => false);
+      if (connect && authenticated) await telegramClient.startUpdates();
+      return {
+        authenticated,
+        connected: Boolean(connect && authenticated),
+        search: messageSyncService.getSearchStatus(),
+        queue: messageSyncService.getQueueStats(),
+      };
+    },
     'sync.once': async ({ idleExitMs = 30000 }, { signal }) => {
       await messageSyncService.refreshChannelsFromDialogs();
       messageSyncService.resumePendingJobs();
