@@ -18,7 +18,7 @@ How can the CLI continue to read the local archive while the server is running, 
 
 1. An archive read must work independently of the server's health, Telegram connectivity, and the optional MCP endpoint, provided the local archive is healthy.
 2. At most one process per account store may own the writable archive service and MTProto session at a time.
-3. The existing CLI commands must remain available when the server runs; commands that need the owner must reach it without requiring MCP.
+3. The CLI must retain its full standalone capability when the server is absent: it can own the store, make Telegram requests, run sync, and change the archive. When the server runs, commands that need the owner must reach it without requiring MCP.
 4. Concurrent callers must not reset another caller's sync jobs or accidentally turn an archive request into a live Telegram request.
 5. The design should keep local access private, preserve account isolation, and work on the project's macOS and Linux service paths.
 
@@ -34,18 +34,19 @@ Chosen option: **Separate archive reads from owner operations.** The archive is 
 
 The implementation contract is:
 
-1. `tgcli server` acquires the per-store owner lock **before** opening the Telegram session or writable archive service, holds it for its lifetime, and releases it after shutdown. A standalone CLI operation needing ownership acquires the same lock before creating those services. A second owner must fail or wait; it must never bypass a live owner.
+1. `tgcli server` acquires the per-store owner lock **before** opening the Telegram session or writable archive service, holds it for its lifetime, and releases it after shutdown. When no server owns the store, a standalone CLI command that needs Telegram or a store change atomically acquires the **same** lock before creating those services. It then performs the Telegram requests and database writes itself, closes both services, and releases the lock in a `finally` path. `sync --follow` holds ownership for its entire run; a one-shot command holds it until that command completes. A second owner, including a server starting during a standalone CLI operation, must fail or wait rather than bypass the live owner. The lock, not a service-state file, decides ownership.
 2. The server exposes a per-store Unix domain socket (for example, `cli.sock` inside the store, accessible only to its owner) for typed, versioned CLI operations on macOS and Linux. The CLI connects to the existing owner for live reads, `--source both`, sync-job changes, sends, metadata refreshes, logout, and other commands that use the session or write the store. Commands execute against the server's existing services. Configuration changes that require a restart report that requirement after being coordinated with the owner. Neither an MCP session nor `mcp.enabled=true` is required. Do not forward arbitrary shell commands or expose this endpoint on a network interface.
 3. Archive-only reads use a separate SQLite connection opened read-only against `messages.db`. That path does not construct `TelegramClient` or `MessageSyncService`, run schema initialization, modify jobs, or take the owner lock. It uses bounded SQLite busy retries and short read transactions. It can read while the owner writes; it does not read `session.json`.
-4. `--source archive` means archive only, including an empty result. Remove the current implicit live fallback for this source. `--source live` and `--source both` explicitly require the owner; if no server owns the store, the CLI can become a short-lived owner for the operation. Preserve the existing output format and account selection.
-5. On a live owner lock, the CLI connects to IPC and verifies that the endpoint belongs to the selected store and speaks a compatible protocol. During startup or shutdown it may retry briefly. If the owner remains alive but unreachable, live or mutating commands fail with a clear service error and do not open a second session. Archive-only reads still use SQLite. If no owner exists, standalone ownership is allowed.
+4. `--source archive` means archive only, including an empty result. Remove the current implicit live fallback for this source. `--source live` and `--source both` explicitly require an owner; if no server owns the store, the CLI becomes that owner and performs the complete operation locally. Preserve the existing output format and account selection.
+5. On a live owner lock, the CLI connects to IPC and verifies that the endpoint belongs to the selected store and speaks a compatible protocol. During startup or shutdown it may retry briefly. If the owner remains alive but unreachable, live or mutating commands fail with a clear service error and do not open a second session. Archive-only reads still use SQLite. If no owner exists, the CLI acquires ownership and uses its standalone path; the IPC endpoint is not a prerequisite for standalone operation.
 6. Keep CLI parsing and output rendering shared across execution modes. Move domain operations to shared functions so the IPC route and standalone route implement the same capability set. Service lifecycle commands remain local; a second `sync --follow` does not start another worker for a store already owned by the server.
 
 | Operation | Server owns store | No owner | Owner alive, IPC unavailable |
 | --- | --- | --- | --- |
 | Archive-only read | Direct read-only SQLite | Direct read-only SQLite | Direct read-only SQLite |
-| Live or combined read | Owner IPC | CLI takes owner lock | Clear service error |
-| Store mutation | Owner IPC | CLI takes owner lock | Clear service error |
+| Live or combined read | Owner IPC | CLI takes owner lock and calls Telegram directly | Clear service error |
+| Store mutation or one-shot sync | Owner IPC | CLI takes owner lock, calls Telegram as needed, and writes locally | Clear service error |
+| `sync --follow` | Report that the owner is already following | CLI holds owner lock until stopped | Clear service error |
 
 The routing applies per selected account store. CLI commands that only inspect process or service state do not need an archive or Telegram owner.
 
@@ -53,6 +54,7 @@ The routing applies per selected account store. CLI commands that only inspect p
 
 * Good: CLI archive searches and message reads remain available during server operation, MCP disablement, and Telegram outages.
 * Good: live CLI requests and mutations share the server's session and sync state; multiple CLI callers can address one owner without opening duplicate writable services.
+* Good: with no server, the CLI remains fully functional and holds the owner lock for the duration of its own Telegram and write operations.
 * Good: `--source archive` has a stable, testable meaning and no surprise network access.
 * Bad: the CLI needs a read-only archive access layer and a versioned private IPC protocol. Existing command handlers must be refactored rather than merely adding a lock around the server.
 * Bad: archive reads can still briefly encounter `SQLITE_BUSY`; long readers can delay WAL checkpointing. Bound retries and transaction lifetime, and report storage failures distinctly from server failures.
@@ -65,6 +67,7 @@ The routing applies per selected account store. CLI commands that only inspect p
 * While a server job is `in_progress`, run archive-only CLI queries and confirm its job status and progress are unchanged by those queries.
 * Stop or make the owner IPC unavailable while preserving a healthy WAL archive; archive-only reads must still work, while live and mutating commands must report the unavailable owner without opening a second session.
 * Verify empty `--source archive` results stay empty and do not call Telegram. Verify `--source live` and `--source both` work through IPC and in standalone mode.
+* With the server stopped, run standalone live reads, sends, sync-job changes, and `sync --follow`; verify each acquires ownership before opening writable services or Telegram, performs the operation locally, and releases ownership only after cleanup. While `sync --follow` owns the store, a server start must not become a second owner.
 * Exercise startup/shutdown races, concurrent CLI writers, stale locks, account isolation, IPC permissions, and protocol-version mismatch. Update `SKILL.md` and CLI documentation when the source behavior or interface changes.
 
 ## Pros and Cons of the Options
