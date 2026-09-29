@@ -1563,7 +1563,8 @@ async function runAuthLogin(globalFlags, options = {}) {
       config,
       forceSms: options.forceSms,
       useQr: options.qr,
-      disableUpdates: !options.follow,
+      // mtcute completes QR login from updateLoginToken; disabling updates drops it.
+      disableUpdates: !options.follow && !options.qr,
     }));
     try {
       const loginSuccess = await telegramClient.login();
@@ -1576,6 +1577,18 @@ async function runAuthLogin(globalFlags, options = {}) {
           throw new Error(`Cannot bind account ${globalFlags.account.id}: Telegram identity is unavailable.`);
         }
         bindAccountIdentity(storeDir, me);
+      }
+      if (options.qr && !options.follow) {
+        // A fresh client proves that mtcute committed the session before we report success.
+        const authenticatedClient = telegramClient;
+        telegramClient = null;
+        await authenticatedClient.destroy();
+        ({ telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true }));
+        const savedUser = await telegramClient.getCurrentUser();
+        if (!savedUser) {
+          throw new Error('Telegram accepted the QR scan, but the saved session is not authorized. Try `tgcli auth --qr` again.');
+        }
+        console.log('QR login verified from saved session.');
       }
       if (options.follow) {
         let archiveError = null;
