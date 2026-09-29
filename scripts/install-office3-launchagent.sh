@@ -29,5 +29,8 @@ launchctl bootout "$domain/$label" 2>/dev/null || true
 cp "$source_plist" "$installed_plist"
 chmod 644 "$installed_plist"
 launchctl enable "$domain/$label"
-launchctl bootstrap "$domain" "$installed_plist"
+if ! launchctl bootstrap "$domain" "$installed_plist" 2>/dev/null; then
+  sleep 1
+  launchctl bootstrap "$domain" "$installed_plist"
+fi
 echo "Loaded $label from $installed_plist"
