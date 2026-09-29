@@ -153,6 +153,51 @@ it('keeps archive and IPC available when Telegram defers dialog refresh', async 
   expect(readStoreLock(storeDir).exists).toBe(false);
 });
 
+it('reuses an existing dialog registry without a new Telegram scan', async () => {
+  storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-cached-dialogs-'));
+  fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+    apiId: 12345, apiHash: 'fixture-only', phoneNumber: '+1234567890',
+    mcp: { enabled: false },
+  }));
+  const start = (extraEnv = {}) => spawn(process.execPath,
+    ['--experimental-loader', loaderPath, serverPath], {
+      cwd: root,
+      env: { ...process.env, TGCLI_STORE: storeDir,
+        TELEGRAM_PROXY: 'socks5://127.0.0.1:1', ...extraEnv },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  const waitReady = (child) => new Promise((resolve, reject) => {
+    let output = '';
+    const timer = setTimeout(() => reject(new Error(`Server startup timed out: ${output}`)), 8000);
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+      if (output.includes('MCP disabled; running sync and local CLI service.')) {
+        clearTimeout(timer);
+        resolve(output);
+      }
+    });
+    child.stderr.on('data', (chunk) => { output += chunk; });
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Server exited before ready (${code}): ${output}`));
+    });
+  });
+
+  server = start();
+  expect(await waitReady(server)).toContain('Seeded 1 dialogs');
+  server.kill('SIGTERM');
+  await new Promise((resolve) => server.once('exit', resolve));
+
+  server = start({ TGCLI_MOCK_DIALOG_FLOOD: '1' });
+  const output = await waitReady(server);
+  expect(output).toContain('Using 1 dialogs from the archive registry');
+  expect(output).not.toContain('Dialog refresh deferred');
+  const status = await runCli(['sync', 'status']);
+  expect(status.code, status.stderr).toBe(0);
+  expect(JSON.parse(status.stdout).dialogRefreshDeferred).toBe(false);
+});
+
 it.skipIf(!selectorAvailable)('serves two MCP clients and a CLI client from the same owner', async () => {
   const allocation = spawnSync('port-selector', ['--name', 'tgcli-mcp-integration'], {
     cwd: root, encoding: 'utf8',

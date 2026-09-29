@@ -131,7 +131,7 @@ Message commands default to `--source archive`, which reads only the local archi
 
 The server and foreground sync processes own the writable archive and Telegram session. They expose a private local socket even when `mcp.enabled` is false. A separate CLI reads archived messages, tags, and sync jobs directly. Commands that need Telegram or change the store use the owner socket while it is running; without an owner, the CLI takes the store lock and runs them itself. `config set/unset` report when the running service needs a restart to use the new setting.
 
-If Telegram rate-limits the server's startup dialog refresh, the server stays available for archive reads and owner IPC, and pauses pending sync work. `tgcli sync status --json` reports `dialogRefreshDeferred: true`. Run `tgcli sync --once` later to retry the full refresh and resume the queue; the server keeps the same owner session.
+On startup, the server reuses dialogs already recorded in the archive registry. It requests the full dialog list only when the registry is empty. If Telegram rate-limits that initial refresh, the server stays available for archive reads and owner IPC, and pauses pending sync work. `tgcli sync status --json` reports `dialogRefreshDeferred: true`. Run `tgcli sync --once` later to retry the full refresh and resume the queue; the server keeps the same owner session. `sync --once` always requests a full dialog refresh explicitly.
 
 If a command times out after the owner accepted it, the error includes a request ID. Check `tgcli owner request <requestId> --json` before retrying a send or another change. Request outcomes remain in the running owner's memory for one hour; a restart makes prior outcomes unknown.
 

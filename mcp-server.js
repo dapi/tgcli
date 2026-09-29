@@ -94,15 +94,20 @@ async function initializeTelegram() {
     throw new Error("Failed to initialize Telegram dialog list");
   }
 
-  try {
-    const dialogCount = await messageSyncService.refreshChannelsFromDialogs();
-    console.log(`[startup] Seeded ${dialogCount} dialogs into archive registry.`);
-  } catch (error) {
-    const waitSeconds = parseRequiredWaitSeconds(error);
-    if (waitSeconds === null) throw error;
-    dialogRefreshDeferred = true;
-    console.warn(`[startup] Dialog refresh deferred after Telegram rate limit (${waitSeconds}s). ` +
-      'The existing archive and owner IPC remain available; run `tgcli sync --once` to retry later.');
+  const cachedDialogCount = messageSyncService.getChannelCount();
+  if (cachedDialogCount > 0) {
+    console.log(`[startup] Using ${cachedDialogCount} dialogs from the archive registry.`);
+  } else {
+    try {
+      const dialogCount = await messageSyncService.refreshChannelsFromDialogs();
+      console.log(`[startup] Seeded ${dialogCount} dialogs into archive registry.`);
+    } catch (error) {
+      const waitSeconds = parseRequiredWaitSeconds(error);
+      if (waitSeconds === null) throw error;
+      dialogRefreshDeferred = true;
+      console.warn(`[startup] Dialog refresh deferred after Telegram rate limit (${waitSeconds}s). ` +
+        'The existing archive and owner IPC remain available; run `tgcli sync --once` to retry later.');
+    }
   }
   messageSyncService.startRealtimeSync();
   if (!dialogRefreshDeferred) messageSyncService.resumePendingJobs();

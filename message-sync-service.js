@@ -1119,6 +1119,10 @@ export default class MessageSyncService extends ArchiveQueries {
     return dialogs.length;
   }
 
+  getChannelCount() {
+    return this.db.prepare('SELECT COUNT(*) AS count FROM channels').get().count;
+  }
+
   upsertChannels(dialogs = []) {
     const tx = this.db.transaction((items) => {
       for (const dialog of items) {
