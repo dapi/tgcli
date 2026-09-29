@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
-function lockPayload() {
-  return JSON.stringify({
+function lockPayload(options = {}) {
+  return {
     pid: process.pid,
     startedAt: new Date().toISOString(),
-  });
+    ...options,
+  };
 }
 
 export function readStoreLock(storeDir) {
@@ -29,18 +31,24 @@ function isPidAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    if (error?.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
+export function parseStoreLock(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.pid === 'number' ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 function parseLockPid(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.pid === 'number' ? parsed.pid : null;
-  } catch {
-    return null;
-  }
+  return parseStoreLock(raw)?.pid ?? null;
 }
 
 function removeStaleLockFile(lockPath, pid, label) {
@@ -79,7 +87,7 @@ function getAliveReadLocks(storeDir) {
   return alive;
 }
 
-export function acquireStoreLock(storeDir, _retried = false) {
+export function acquireOwnerLock(storeDir, options = {}) {
   const lockPath = path.join(storeDir, 'LOCK');
   fs.mkdirSync(storeDir, { recursive: true });
 
@@ -90,70 +98,117 @@ export function acquireStoreLock(storeDir, _retried = false) {
     throw new Error(`Store has active readers (pids: ${pids}), cannot acquire write lock`);
   }
 
+  const ownerId = randomUUID();
+  const details = lockPayload({
+    ownerId,
+    kind: options.kind ?? 'transient',
+    state: options.state ?? 'transient',
+    protocolVersion: options.protocolVersion ?? 1,
+    socketPath: options.socketPath ?? null,
+  });
+
+  const claim = () => {
+    if (fs.existsSync(`${lockPath}.reclaim`)) {
+      throw new Error('Store lock recovery is already in progress');
+    }
+    const fd = fs.openSync(lockPath, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(details));
+      if (fs.existsSync(`${lockPath}.reclaim`)) {
+        throw new Error('Store lock recovery is already in progress');
+      }
+    } catch (error) {
+      fs.unlinkSync(lockPath);
+      throw error;
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+
   try {
-    const fd = fs.openSync(lockPath, 'wx');
-    fs.writeFileSync(fd, lockPayload());
-    fs.closeSync(fd);
+    claim();
   } catch (error) {
     if (error.code === 'EEXIST') {
       const info = readStoreLock(storeDir);
       const pid = parseLockPid(info.info);
-      if (pid && !isPidAlive(pid) && !_retried) {
-        removeStaleLockFile(lockPath, pid, 'store lock');
-        return acquireStoreLock(storeDir, true);
+      if (pid && !isPidAlive(pid)) {
+        const reclaimPath = `${lockPath}.reclaim`;
+        let reclaimFd;
+        try {
+          reclaimFd = fs.openSync(reclaimPath, 'wx', 0o600);
+        } catch (reclaimError) {
+          if (reclaimError?.code === 'EEXIST') {
+            throw new Error('Store lock recovery is already in progress');
+          }
+          throw reclaimError;
+        }
+        try {
+          fs.writeFileSync(reclaimFd, JSON.stringify(lockPayload()));
+          const current = readStoreLock(storeDir);
+          if (current.info !== info.info) {
+            throw new Error('Store lock changed during recovery');
+          }
+          removeStaleLockFile(lockPath, pid, 'store lock');
+          const fd = fs.openSync(lockPath, 'wx', 0o600);
+          try {
+            fs.writeFileSync(fd, JSON.stringify(details));
+          } finally {
+            fs.closeSync(fd);
+          }
+        } finally {
+          fs.closeSync(reclaimFd);
+          fs.unlinkSync(reclaimPath);
+        }
+      } else {
+        const extra = info.info ? ` (${info.info})` : '';
+        throw new Error(`Store is locked by another process${extra}`);
       }
-      const details = info.info ? ` (${info.info})` : '';
-      throw new Error(`Store is locked by another process${details}`);
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   let released = false;
-  return () => {
+  const update = (patch) => {
+    if (released) throw new Error('Cannot update a released store lock');
+    const current = parseStoreLock(readStoreLock(storeDir).info);
+    if (current?.ownerId !== ownerId) throw new Error('Store lock ownership changed');
+    Object.assign(details, patch);
+    const tempPath = `${lockPath}.${ownerId}.tmp`;
+    try {
+      fs.writeFileSync(tempPath, JSON.stringify(details), { mode: 0o600 });
+      fs.renameSync(tempPath, lockPath);
+    } finally {
+      try { fs.unlinkSync(tempPath); } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
+  };
+  const release = () => {
     if (released) {
       return;
     }
-    released = true;
+    const current = parseStoreLock(readStoreLock(storeDir).info);
+    if (current?.ownerId !== ownerId) throw new Error('Store lock ownership changed');
     try {
       fs.unlinkSync(lockPath);
+      released = true;
     } catch (error) {
       if (error.code !== 'ENOENT') {
         throw error;
       }
+      released = true;
     }
   };
+  return { info: details, update, release };
+}
+
+export function acquireStoreLock(storeDir) {
+  return acquireOwnerLock(storeDir).release;
 }
 
 export function acquireReadLock(storeDir) {
-  fs.mkdirSync(storeDir, { recursive: true });
-
-  // Check for alive write lock
-  const writeLock = readStoreLock(storeDir);
-  if (writeLock.exists) {
-    const pid = parseLockPid(writeLock.info);
-    if (pid && !isPidAlive(pid)) {
-      removeStaleLockFile(writeLock.path, pid, 'store lock');
-    } else {
-      const details = writeLock.info ? ` (${writeLock.info})` : '';
-      throw new Error(`Store is locked by a writer${details}`);
-    }
-  }
-
-  const readLockPath = path.join(storeDir, `LOCK.read.${process.pid}`);
-  fs.writeFileSync(readLockPath, lockPayload());
-
-  let released = false;
-  return () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    try {
-      fs.unlinkSync(readLockPath);
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-  };
+  // Legacy callers open writable services and a Telegram session even for reads.
+  // Until they use the read-only archive or owner IPC, they need exclusive ownership.
+  return acquireStoreLock(storeDir);
 }

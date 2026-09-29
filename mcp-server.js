@@ -10,6 +10,7 @@ import { z } from "zod";
 import { loadConfig, validateConfig } from "./core/config.js";
 import { createServices } from "./core/services.js";
 import { resolveStoreDir } from "./core/store.js";
+import { acquireOwnerLock } from "./store-lock.js";
 
 const SERVICE_STATE_FILE = "service-state.json";
 
@@ -26,7 +27,15 @@ const resolvedHost = mcpConfig.host ?? process.env.MCP_HOST ?? process.env.FASTM
 const resolvedPort = Number(mcpConfig.port ?? process.env.MCP_PORT ?? process.env.FASTMCP_PORT ?? "8080");
 const HOST = resolvedHost;
 const PORT = Number.isFinite(resolvedPort) && resolvedPort > 0 ? resolvedPort : 8080;
-const { telegramClient, messageSyncService } = createServices({ storeDir, config });
+const ownerLock = acquireOwnerLock(storeDir, { kind: "server", state: "starting" });
+let services;
+try {
+  services = createServices({ storeDir, config });
+} catch (error) {
+  ownerLock.release();
+  throw error;
+}
+const { telegramClient, messageSyncService } = services;
 
 let telegramReady = false;
 let serviceState = null;
@@ -2094,11 +2103,13 @@ async function handleSessionRequest(req, res) {
   await record.transport.handleRequest(req, res);
 }
 
-// TODO: MCP server should participate in the store locking protocol.
-// Currently it opens the SQLite DB and Telegram session without any lock,
-// which can cause conflicts with concurrent CLI commands.
-await initializeTelegram().catch((error) => {
+await initializeTelegram().then(() => {
+  ownerLock.update({ state: "ready" });
+}).catch(async (error) => {
   console.error(`[startup] Telegram initialization failed: ${error?.message ?? error}`);
+  await messageSyncService.shutdown().catch(() => {});
+  await telegramClient.destroy().catch(() => {});
+  ownerLock.release();
   process.exit(1);
 });
 
@@ -2189,6 +2200,11 @@ async function shutdown() {
     return;
   }
   shuttingDown = true;
+  try {
+    ownerLock.update({ state: "stopping" });
+  } catch (error) {
+    console.error(`[shutdown] failed to update owner state: ${error?.message ?? error}`);
+  }
   console.log("[shutdown] received termination signal, closing resources...");
   const closeTasks = [];
   for (const record of sessions.values()) {
@@ -2202,8 +2218,11 @@ async function shutdown() {
   }
   if (httpServer) {
     httpServer.closeAllConnections?.();
-    httpServer.close(() => {
-      console.log("[shutdown] HTTP server closed");
+    await new Promise((resolve) => {
+      httpServer.close(() => {
+        console.log("[shutdown] HTTP server closed");
+        resolve();
+      });
     });
   }
 
@@ -2217,6 +2236,12 @@ async function shutdown() {
     await telegramClient.destroy();
   } catch (error) {
     console.error(`[shutdown] error while closing Telegram client: ${error?.message ?? error}`);
+  }
+
+  try {
+    ownerLock.release();
+  } catch (error) {
+    console.error(`[shutdown] failed to release store lock: ${error?.message ?? error}`);
   }
 
   updateServiceState({
