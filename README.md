@@ -129,7 +129,7 @@ tgcli server
 
 Message commands default to `--source archive`, which reads only the local archive and returns an empty or not-found result on a cache miss. Use `--source live` to request Telegram data, or `--source both` to combine archive and live results.
 
-The server and foreground sync processes own the writable archive and Telegram session. They expose a private local socket even when `mcp.enabled` is false. A separate CLI can read archived messages and sync jobs directly; `sync status`, `sync jobs add/retry/cancel`, `sync --once`, and `channels list` use the owner socket while it is running. Other commands that still need the writable service report a busy store until their owner routing is implemented.
+The server and foreground sync processes own the writable archive and Telegram session. They expose a private local socket even when `mcp.enabled` is false. A separate CLI reads archived messages, tags, and sync jobs directly. Commands that need Telegram or change the store use the owner socket while it is running; without an owner, the CLI takes the store lock and runs them itself. `config set/unset` report when the running service needs a restart to use the new setting.
 
 ## Commands
 

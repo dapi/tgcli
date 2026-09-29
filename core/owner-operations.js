@@ -4,7 +4,7 @@ import { createServices } from './services.js';
 import { callOwner } from './owner-ipc.js';
 import { acquireOwnerLock, isPidAlive, parseStoreLock, readStoreLock } from '../store-lock.js';
 
-export function createOwnerOperations({ telegramClient, messageSyncService }) {
+export function createOwnerOperations({ storeDir, telegramClient, messageSyncService, onAuthLogout }) {
   let mutationTail = Promise.resolve();
   const serialize = (handler) => (args, context) => {
     const current = mutationTail.then(() => handler(args, context));
@@ -12,6 +12,15 @@ export function createOwnerOperations({ telegramClient, messageSyncService }) {
     return current;
   };
   return {
+    'auth.current': async () => {
+      const me = await telegramClient.getCurrentUser();
+      return { authenticated: Boolean(me), username: me?.username ?? null };
+    },
+    'auth.logout': serialize(async () => {
+      await telegramClient.client.logout();
+      if (onAuthLogout) setTimeout(() => void onAuthLogout(), 250);
+      return { loggedOut: true };
+    }),
     'sync.status': () => ({ queue: messageSyncService.getQueueStats() }),
     'sync.once': async ({ idleExitMs = 30000 }, { signal }) => {
       await messageSyncService.refreshChannelsFromDialogs();
@@ -55,16 +64,21 @@ export function createOwnerOperations({ telegramClient, messageSyncService }) {
         ? telegramClient.searchDialogs(query, limit)
         : telegramClient.listDialogs(limit);
     },
+    'cli.execute': serialize(async (request) => {
+      const { executeOwnerCliCommand } = await import('../cli.js');
+      return executeOwnerCliCommand(request, { telegramClient, messageSyncService }, storeDir);
+    }),
   };
 }
 
-export async function runOwnerOperation({ storeDir, operation, args = {}, timeoutMs = 30000 }) {
-  const deadline = Date.now() + timeoutMs;
+export async function runOwnerOperation({ storeDir, operation, args = {}, timeoutMs = null, localHandler }) {
+  const deadline = Date.now() + (timeoutMs ?? 30000);
   while (Date.now() < deadline) {
     const info = parseStoreLock(readStoreLock(storeDir).info);
     const ownerAlive = info?.pid && isPidAlive(info.pid);
     if (ownerAlive && info.state === 'ready' && info.socketPath) {
-      return callOwner({ storeDir, operation, args, timeoutMs: Math.max(1, deadline - Date.now()) });
+      return callOwner({ storeDir, operation, args,
+        timeoutMs: timeoutMs === null ? 24 * 60 * 60 * 1000 : Math.max(1, deadline - Date.now()) });
     }
     if (!info || !ownerAlive || info.state === 'transient') {
       let ownerLock;
@@ -74,21 +88,38 @@ export async function runOwnerOperation({ storeDir, operation, args = {}, timeou
         if (!error.message.includes('locked') && !error.message.includes('recovery')) throw error;
       }
       if (ownerLock) {
-        let services;
-        try {
-          services = createServices({ storeDir });
-          const handler = createOwnerOperations(services)[operation];
-          if (!handler) throw new Error(`Unknown owner operation: ${operation}`);
-          return await handler(args, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
-        } finally {
+        const work = (async () => {
+          let services;
           try {
-            if (services) {
-              await services.messageSyncService.shutdown();
-              await services.telegramClient.destroy();
-            }
+            if (localHandler) return await localHandler();
+            services = createServices({ storeDir });
+            const handler = createOwnerOperations(services)[operation];
+            if (!handler) throw new Error(`Unknown owner operation: ${operation}`);
+            return await handler(args, { signal: timeoutMs === null
+              ? undefined : AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
           } finally {
+            let cleanupError;
+            if (services) {
+              try { await services.messageSyncService.shutdown(); } catch (error) { cleanupError = error; }
+              try { await services.telegramClient.destroy(); } catch (error) { cleanupError ??= error; }
+            }
+            if (cleanupError) throw cleanupError;
             ownerLock.release();
           }
+        })();
+        if (timeoutMs === null) return work;
+        const remaining = Math.max(1, deadline - Date.now());
+        let timer;
+        try {
+          return await Promise.race([work, new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              const error = new Error('Local owner operation timed out; its result is unknown');
+              error.code = 'UNKNOWN_RESULT';
+              reject(error);
+            }, remaining);
+          })]);
+        } finally {
+          clearTimeout(timer);
         }
       }
     }

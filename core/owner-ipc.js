@@ -203,6 +203,14 @@ export async function callOwner({ storeDir, operation, args, timeoutMs = 30000 }
       else if (frame.type === 'complete') return JSON.parse(Buffer.concat(chunks).toString('utf8'));
       else throw protocolError('INVALID_FRAME', 'Unexpected owner IPC response');
     }
+  } catch (error) {
+    if (requestSent && ['OWNER_UNAVAILABLE', 'ECONNRESET', 'EPIPE'].includes(error.code)) {
+      throw protocolError('UNKNOWN_RESULT', 'Owner connection closed after request; its result is unknown');
+    }
+    if (!requestSent && ['ENOENT', 'ECONNREFUSED', 'ECONNRESET'].includes(error.code)) {
+      throw protocolError('OWNER_UNAVAILABLE', 'Owner IPC is unavailable');
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
     socket.destroy();

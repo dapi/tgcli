@@ -6,9 +6,18 @@ import { spawn, spawnSync } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 import readline from 'readline';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { format as formatOutput } from 'node:util';
 import { Command, Option } from 'commander';
 
-import { acquireOwnerLock, acquireStoreLock, acquireReadLock, isPidAlive, parseStoreLock, readStoreLock } from './store-lock.js';
+import {
+  acquireOwnerLock,
+  acquireStoreLock as acquireStoreLockBase,
+  acquireReadLock as acquireReadLockBase,
+  isPidAlive,
+  parseStoreLock,
+  readStoreLock,
+} from './store-lock.js';
 import {
   addAccount,
   bindAccountIdentity,
@@ -17,7 +26,11 @@ import {
   resolveAccountContext,
 } from './core/accounts.js';
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
-import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
+import {
+  createMessageSyncService as createMessageSyncServiceBase,
+  createServices as createServicesBase,
+  createTelegramClient as createTelegramClientBase,
+} from './core/services.js';
 import { ArchiveReader } from './core/archive-reader.js';
 import { runOwnerOperation } from './core/owner-operations.js';
 import { createOwnerOperations } from './core/owner-operations.js';
@@ -32,7 +45,7 @@ import {
   SendCommandError,
 } from './core/send-utils.js';
 import { parseLaunchdList, resolveServiceIdentity } from './core/service-identity.js';
-import { resolveStoreDir } from './core/store.js';
+import { resolveStoreDir as resolveStoreDirBase } from './core/store.js';
 import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
@@ -49,6 +62,62 @@ const CONFIG_SPECS = [
   { key: 'mcp.port', path: ['mcp', 'port'], type: 'number' },
 ];
 const SEND_PARSE_MODES = ['markdown', 'html', 'none'];
+const ownerExecution = new AsyncLocalStorage();
+
+function resolveStoreDir() {
+  return ownerExecution.getStore()?.storeDir ?? resolveStoreDirBase();
+}
+
+function ownerServiceProxy(service, closeMethod) {
+  return new Proxy(service, {
+    get(target, property) {
+      if (property === closeMethod) return async () => {};
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+function assertOwnerStore(context, storeDir) {
+  if (!storeDir || fs.realpathSync(storeDir) !== fs.realpathSync(context.storeDir)) {
+    throw new Error('Owner CLI handler attempted to access a different account store');
+  }
+}
+
+function createServices(options) {
+  const context = ownerExecution.getStore();
+  if (!context) return createServicesBase(options);
+  assertOwnerStore(context, options?.storeDir);
+  return {
+    ...context.services,
+    telegramClient: context.telegramClient,
+    messageSyncService: context.messageSyncService,
+  };
+}
+
+function createTelegramClient(options) {
+  const context = ownerExecution.getStore();
+  if (context) assertOwnerStore(context, options?.storeDir);
+  return context
+    ? { telegramClient: context.telegramClient }
+    : createTelegramClientBase(options);
+}
+
+function createMessageSyncService(telegramClient, options) {
+  const context = ownerExecution.getStore();
+  if (context) assertOwnerStore(context, options?.storeDir);
+  return context
+    ? { messageSyncService: context.messageSyncService }
+    : createMessageSyncServiceBase(telegramClient, options);
+}
+
+function acquireStoreLock(storeDir) {
+  return ownerExecution.getStore() ? () => {} : acquireStoreLockBase(storeDir);
+}
+
+function acquireReadLock(storeDir) {
+  return ownerExecution.getStore() ? () => {} : acquireReadLockBase(storeDir);
+}
 
 const CLI_PROGRAM = buildProgram();
 
@@ -624,12 +693,101 @@ function getGlobalFlags(command) {
   };
 }
 
+function commandPath(command) {
+  const parts = [];
+  for (let current = command; current?.parent; current = current.parent) {
+    parts.unshift(current.name());
+  }
+  return parts.join(' ');
+}
+
+function normalizeOwnerArgs(name, args) {
+  const normalized = structuredClone(args);
+  const options = normalized.at(-1);
+  if (options && typeof options === 'object') {
+    const inputField = name === 'send photo' ? 'photo' : name === 'send file' ? 'file' : null;
+    if (inputField && options[inputField]) options[inputField] = path.resolve(options[inputField]);
+    if (name === 'media download' && options.output) options.output = path.resolve(options.output);
+  }
+  return normalized;
+}
+
+function readCachedOwnerResult(name, options, storeDir) {
+  const methods = {
+    'channels show': ['chat', 'getChannel'],
+    'metadata get': ['chat', 'getChannelMetadata'],
+    'contacts show': ['user', 'getContact'],
+  };
+  const match = methods[name];
+  if (!match || !options?.[match[0]]) return null;
+  let reader;
+  try {
+    reader = new ArchiveReader(storeDir);
+    return reader[match[1]](options[match[0]]);
+  } catch (error) {
+    if (error.name === 'ArchiveUnavailableError' && error.cause?.code === 'SQLITE_CANTOPEN') return null;
+    throw error;
+  } finally {
+    reader?.close();
+  }
+}
+
 function withGlobalOptions(handler) {
   return async (...args) => {
     let globalFlags;
     try {
       const command = args[args.length - 1];
       globalFlags = getGlobalFlags(command);
+      const name = commandPath(command);
+      const actionArgs = args.slice(0, -1);
+      if (name === 'auth' || name === 'auth logout') {
+        const current = parseStoreLock(readStoreLock(resolveStoreDir()).info);
+        if (current?.pid && isPidAlive(current.pid)) {
+          if (name === 'auth') {
+            const options = actionArgs.at(-1) ?? {};
+            if (options.forceSms || options.qr) {
+              throw new Error('An active owner is already authenticated; stop it before changing login method.');
+            }
+            const auth = await runOwnerOperation({ storeDir: resolveStoreDir(),
+              operation: 'auth.current', timeoutMs: globalFlags.timeoutMs ?? 30000 });
+            if (!auth.authenticated) throw new Error('Store owner has no authenticated Telegram session.');
+            if (globalFlags.json) writeJson({ authenticated: true, archiveReady: true, running: true });
+            else console.log(`Authenticated${auth.username ? ` as @${auth.username}` : ''}; sync is running.`);
+          } else {
+            const result = await runOwnerOperation({ storeDir: resolveStoreDir(),
+              operation: 'auth.logout', timeoutMs: globalFlags.timeoutMs ?? 30000 });
+            if (globalFlags.json) writeJson(result);
+            else console.log('Logged out.');
+          }
+          return;
+        }
+      }
+      const archiveMessages = name.startsWith('messages ') &&
+        resolveSource(actionArgs.at(-1)?.source) === 'archive';
+      const archiveTags = name === 'tags list' || name === 'tags search';
+      const configWrite = name === 'config set' || name === 'config unset';
+      const unconfiguredAuthStatus = name === 'auth status' &&
+        getStoreConfig(resolveStoreDir()).missing.length > 0;
+      if (ownerCliHandlers[name] && !archiveMessages && !archiveTags && !unconfiguredAuthStatus) {
+        const cached = readCachedOwnerResult(name, actionArgs.at(-1), resolveStoreDir());
+        if (cached) {
+          if (globalFlags.json) writeJson(cached);
+          else console.log(JSON.stringify(cached, null, 2));
+          return;
+        }
+        const result = await runOwnerOperation({
+          storeDir: resolveStoreDir(),
+          operation: 'cli.execute',
+          args: { commandPath: name, args: normalizeOwnerArgs(name, actionArgs),
+            flags: { json: globalFlags.json, timeoutMs: globalFlags.timeoutMs } },
+          timeoutMs: globalFlags.timeoutMs,
+          localHandler: configWrite ? () => handler(globalFlags, ...args) : undefined,
+        });
+        if (result == null) return;
+        if (result.stderr) process.stderr.write(result.stderr);
+        if (result.stdout) process.stdout.write(result.stdout);
+        return;
+      }
       await handler(globalFlags, ...args);
     } catch (error) {
       writeError(error, globalFlags?.json ?? process.argv.includes('--json'));
@@ -1020,6 +1178,11 @@ function resolveServiceManager(accountId = 'default') {
 }
 
 function runWithTimeout(task, timeoutMs, onTimeout) {
+  // Owner IPC has its own deadline. Let an accepted operation finish before its
+  // shared services can be closed or a transient owner claim can be released.
+  if (ownerExecution.getStore()) {
+    return task();
+  }
   if (!timeoutMs) {
     return task();
   }
@@ -1040,6 +1203,20 @@ function runWithTimeout(task, timeoutMs, onTimeout) {
       clearTimeout(timeoutId);
     }
   });
+}
+
+async function claimStoreOwner(storeDir, options, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs ?? 30000);
+  while (Date.now() < deadline) {
+    try {
+      return acquireOwnerLock(storeDir, options);
+    } catch (error) {
+      if (!error.message.includes('locked') && !error.message.includes('readers') &&
+          !error.message.includes('recovery')) throw error;
+      await delay(100);
+    }
+  }
+  throw new Error('Timed out waiting for the store owner');
 }
 
 async function refreshDialogsWithRetry(messageSyncService, options = {}) {
@@ -1517,9 +1694,9 @@ async function runAuthLogout(globalFlags) {
       return;
     }
     const config = await ensureStoreConfig(storeDir);
-    release = acquireStoreLock(storeDir);
-    ({ telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true }));
+    release = (await claimStoreOwner(storeDir, { kind: 'transient', state: 'transient' }, timeoutMs)).release;
     try {
+      ({ telegramClient } = createTelegramClient({ storeDir, config, disableUpdates: true }));
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
         throw new Error('Failed to login to Telegram.');
@@ -1533,7 +1710,7 @@ async function runAuthLogout(globalFlags) {
     } finally {
       await cleanup();
     }
-  }, timeoutMs, cleanup);
+  }, timeoutMs);
 }
 
 async function runAuthLogin(globalFlags, options = {}) {
@@ -1544,43 +1721,36 @@ async function runAuthLogin(globalFlags, options = {}) {
   let messageSyncService = null;
   let handedOff = false;
   const cleanup = async () => {
-    try {
-      if (stopOwnerIpc) {
-        const stop = stopOwnerIpc;
-        stopOwnerIpc = null;
-        await stop();
-      }
-    } finally {
-      try {
-        if (messageSyncService) {
-          const currentService = messageSyncService;
-          messageSyncService = null;
-          await currentService.shutdown();
-        }
-      } finally {
-        try {
-          if (telegramClient) {
-            const currentClient = telegramClient;
-            telegramClient = null;
-            await currentClient.destroy();
-          }
-        } finally {
-          if (ownerLock) {
-            const currentOwner = ownerLock;
-            ownerLock = null;
-            currentOwner.release();
-          }
-        }
-      }
+    let cleanupError;
+    if (stopOwnerIpc) {
+      const stop = stopOwnerIpc;
+      stopOwnerIpc = null;
+      try { await stop(); } catch (error) { cleanupError = error; }
+    }
+    if (messageSyncService) {
+      const currentService = messageSyncService;
+      messageSyncService = null;
+      try { await currentService.shutdown(); } catch (error) { cleanupError ??= error; }
+    }
+    if (telegramClient) {
+      const currentClient = telegramClient;
+      telegramClient = null;
+      try { await currentClient.destroy(); } catch (error) { cleanupError ??= error; }
+    }
+    if (cleanupError) throw cleanupError;
+    if (ownerLock) {
+      const currentOwner = ownerLock;
+      ownerLock = null;
+      currentOwner.release();
     }
   };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
     const config = await ensureStoreConfig(storeDir);
-    ownerLock = acquireOwnerLock(storeDir, {
+    ownerLock = await claimStoreOwner(storeDir, {
       kind: options.follow ? 'auth' : 'transient',
       state: options.follow ? 'starting' : 'transient',
-    });
+    }, timeoutMs);
     try {
       ({ telegramClient } = createTelegramClient({
         storeDir,
@@ -1613,7 +1783,8 @@ async function runAuthLogin(globalFlags, options = {}) {
         messageSyncService.startRealtimeSync();
         messageSyncService.resumePendingJobs();
         stopOwnerIpc = await startOwnerIpc({ storeDir, ownerLock,
-          operations: createOwnerOperations({ telegramClient, messageSyncService }) });
+          operations: createOwnerOperations({ storeDir, telegramClient, messageSyncService,
+            onAuthLogout: () => cleanup().finally(() => process.exit(0)) }) });
         await withShutdown(async () => {
           await cleanup();
         });
@@ -1636,7 +1807,7 @@ async function runAuthLogin(globalFlags, options = {}) {
         await cleanup();
       }
     }
-  }, timeoutMs, cleanup);
+  }, timeoutMs);
 }
 
 async function runConfigList(globalFlags) {
@@ -1682,11 +1853,13 @@ async function runConfigSet(globalFlags, key, value) {
   setValueAtPath(next, spec.path, parsedValue);
   const { config: saved } = saveConfig(storeDir, next);
   const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));
+  const restartRequired = Boolean(ownerExecution.getStore());
   if (globalFlags.json) {
-    writeJson({ ok: true, key: spec.key, value: storedValue });
+    writeJson({ ok: true, key: spec.key, value: storedValue, restartRequired });
     return;
   }
   console.log(`Updated ${spec.key}: ${formatConfigValue(storedValue)}`);
+  if (restartRequired) console.log('Restart the running service to apply this setting.');
 }
 
 async function runConfigUnset(globalFlags, key) {
@@ -1705,11 +1878,13 @@ async function runConfigUnset(globalFlags, key) {
   deleteValueAtPath(next, spec.path);
   const { config: saved } = saveConfig(storeDir, next);
   const storedValue = normalizeOutputValue(getValueAtPath(saved, spec.path));
+  const restartRequired = Boolean(ownerExecution.getStore());
   if (globalFlags.json) {
-    writeJson({ ok: true, key: spec.key, value: storedValue });
+    writeJson({ ok: true, key: spec.key, value: storedValue, restartRequired });
     return;
   }
   console.log(`Cleared ${spec.key}.`);
+  if (restartRequired) console.log('Restart the running service to apply this setting.');
 }
 
 async function runSync(globalFlags, options = {}) {
@@ -1749,18 +1924,16 @@ async function runSync(globalFlags, options = {}) {
     let stopOwnerIpc;
     let handedOff = false;
     const cleanup = async () => {
-      try {
-        if (stopOwnerIpc) await stopOwnerIpc();
-      } finally {
-        try {
-          if (services) {
-            await services.messageSyncService.shutdown();
-            await services.telegramClient.destroy();
-          }
-        } finally {
-          ownerLock.release();
-        }
+      let cleanupError;
+      if (stopOwnerIpc) {
+        try { await stopOwnerIpc(); } catch (error) { cleanupError = error; }
       }
+      if (services) {
+        try { await services.messageSyncService.shutdown(); } catch (error) { cleanupError ??= error; }
+        try { await services.telegramClient.destroy(); } catch (error) { cleanupError ??= error; }
+      }
+      if (cleanupError) throw cleanupError;
+      ownerLock.release();
     };
     try {
       services = createServices({ storeDir });
@@ -1777,7 +1950,8 @@ async function runSync(globalFlags, options = {}) {
         messageSyncService.startRealtimeSync();
       }
       stopOwnerIpc = await startOwnerIpc({ storeDir, ownerLock,
-        operations: createOwnerOperations(services) });
+        operations: createOwnerOperations({ ...services,
+          onAuthLogout: () => cleanup().finally(() => process.exit(0)) }) });
       if (follow) {
         if (!globalFlags.json) console.log('Sync running. Press Ctrl+C to stop.');
         await withShutdown(cleanup);
@@ -3250,19 +3424,16 @@ async function runTagsList(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const reader = new ArchiveReader(storeDir);
     try {
-      const tags = messageSyncService.listChannelTags(options.chat, { source: options.source });
+      const tags = reader.listChannelTags(options.chat, { source: options.source });
       if (globalFlags.json) {
         writeJson(tags);
       } else {
         console.log(tags.map((tag) => tag.tag).join(', '));
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      reader.close();
     }
   }, timeoutMs);
 }
@@ -3274,11 +3445,10 @@ async function runTagsSearch(globalFlags, options = {}) {
       throw new Error('--tag is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const reader = new ArchiveReader(storeDir);
     try {
       const limit = parsePositiveInt(options.limit, '--limit') ?? 100;
-      const channels = messageSyncService.listTaggedChannels(options.tag, {
+      const channels = reader.listTaggedChannels(options.tag, {
         source: options.source,
         limit,
       });
@@ -3291,9 +3461,7 @@ async function runTagsSearch(globalFlags, options = {}) {
         }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
+      reader.close();
     }
   }, timeoutMs);
 }
@@ -4319,6 +4487,108 @@ async function runFoldersJoin(globalFlags, link) {
       release();
     }
   }, timeoutMs);
+}
+
+const ownerCliHandlers = {
+  'auth status': runAuthStatus,
+  'config set': runConfigSet,
+  'config unset': runConfigUnset,
+  'doctor': runDoctor,
+  'channels show': runChannelsShow,
+  'channels sync': runChannelsSync,
+  'messages list': runMessagesList,
+  'messages search': runMessagesSearch,
+  'messages show': runMessagesShow,
+  'messages context': runMessagesContext,
+  'send text': runSendText,
+  'send photo': runSendPhoto,
+  'send file': runSendFile,
+  'media download': runMediaDownload,
+  'topics list': runTopicsList,
+  'topics search': runTopicsSearch,
+  'tags set': runTagsSet,
+  'tags list': runTagsList,
+  'tags search': runTagsSearch,
+  'tags auto': runTagsAuto,
+  'metadata get': runMetadataGet,
+  'metadata refresh': runMetadataRefresh,
+  'contacts search': runContactsSearch,
+  'contacts show': runContactsShow,
+  'contacts alias set': runContactsAliasSet,
+  'contacts alias rm': runContactsAliasRm,
+  'contacts tags add': runContactsTagsAdd,
+  'contacts tags rm': runContactsTagsRm,
+  'contacts notes set': runContactsNotesSet,
+  'groups list': runGroupsList,
+  'groups info': runGroupsInfo,
+  'groups requests list': runGroupJoinRequestsList,
+  'groups requests approve': runGroupJoinRequestApprove,
+  'groups requests decline': runGroupJoinRequestDecline,
+  'groups rename': runGroupsRename,
+  'groups members add': runGroupMembersAdd,
+  'groups members remove': runGroupMembersRemove,
+  'groups invite get': runGroupInviteLinkGet,
+  'groups invite edit': runGroupInviteLinkEdit,
+  'groups invite revoke': runGroupInviteLinkRevoke,
+  'groups join': runGroupsJoin,
+  'groups leave': runGroupsLeave,
+  'folders list': runFoldersList,
+  'folders show': runFoldersShow,
+  'folders create': runFoldersCreate,
+  'folders edit': runFoldersEdit,
+  'folders delete': runFoldersDelete,
+  'folders reorder': runFoldersReorder,
+  'folders chats add': runFoldersChatsAdd,
+  'folders chats remove': runFoldersChatsRemove,
+  'folders join': runFoldersJoin,
+};
+
+let ownerOutputCaptureInstalled = false;
+function installOwnerOutputCapture() {
+  if (ownerOutputCaptureInstalled) return;
+  ownerOutputCaptureInstalled = true;
+  const originalLog = console.log.bind(console);
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  console.log = (...values) => {
+    const context = ownerExecution.getStore();
+    if (context?.active) context.stdout.push(`${formatOutput(...values)}\n`);
+    else originalLog(...values);
+  };
+  const captureWrite = (original, field) => (chunk, encoding, callback) => {
+    const context = ownerExecution.getStore();
+    if (!context?.active) return original(chunk, encoding, callback);
+    context[field].push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+    const done = typeof encoding === 'function' ? encoding : callback;
+    if (typeof done === 'function') done();
+    return true;
+  };
+  process.stdout.write = captureWrite(originalStdoutWrite, 'stdout');
+  process.stderr.write = captureWrite(originalStderrWrite, 'stderr');
+}
+
+export async function executeOwnerCliCommand({ commandPath, args, flags }, services, storeDir) {
+  const handler = ownerCliHandlers[commandPath];
+  if (!handler || !Array.isArray(args)) throw new Error('Owner CLI command is not allowed');
+  installOwnerOutputCapture();
+  const context = {
+    storeDir,
+    services,
+    telegramClient: ownerServiceProxy(services.telegramClient, 'destroy'),
+    messageSyncService: ownerServiceProxy(services.messageSyncService, 'shutdown'),
+    stdout: [],
+    stderr: [],
+    active: true,
+  };
+  try {
+    await ownerExecution.run(context, () => handler({
+      json: Boolean(flags?.json),
+      timeoutMs: flags?.timeoutMs ?? null,
+    }, ...args));
+    return { stdout: context.stdout.join(''), stderr: context.stderr.join('') };
+  } finally {
+    context.active = false;
+  }
 }
 
 async function main() {

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 import { resolveStoreDir } from './store.js';
 
@@ -171,12 +172,14 @@ export function saveConfig(storeDir = resolveStoreDir(), config) {
   const configPath = resolveConfigPath(storeDir);
   const payload = normalizeConfig(config ?? {}, { includeEnv: false });
   fs.mkdirSync(storeDir, { recursive: true });
-  if (fs.existsSync(configPath) && process.platform !== 'win32') {
-    fs.chmodSync(configPath, 0o600);
-  }
-  fs.writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  if (process.platform !== 'win32') {
-    fs.chmodSync(configPath, 0o600);
+  const tempPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tempPath, configPath);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
   }
   return { config: payload, path: configPath };
 }

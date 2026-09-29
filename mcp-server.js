@@ -2110,7 +2110,8 @@ await initializeTelegram().then(async () => {
   stopOwnerIpc = await startOwnerIpc({
     storeDir,
     ownerLock,
-    operations: createOwnerOperations({ telegramClient, messageSyncService }),
+    operations: createOwnerOperations({ storeDir, telegramClient, messageSyncService,
+      onAuthLogout: () => shutdown().finally(() => process.exit(0)) }),
   });
 }).catch(async (error) => {
   console.error(`[startup] Telegram initialization failed: ${error?.message ?? error}`);
@@ -2199,7 +2200,7 @@ if (mcpEnabled) {
     console.error(`[http] server error: ${error.message}`);
   });
 } else {
-  console.log("[startup] MCP disabled; running sync-only service.");
+  console.log("[startup] MCP disabled; running sync and local CLI service.");
 }
 
 async function shutdown() {

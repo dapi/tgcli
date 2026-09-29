@@ -53,7 +53,7 @@ tgcli auth
 - Add `--timeout 30s` by default; use `--timeout 90s` for heavy live reads.
 - Prefer explicit `--source archive|live|both` instead of relying on defaults.
 - `--source archive` reads only the local archive, including when no result is found. Use `--source live` to query Telegram or `--source both` to combine them.
-- With `tgcli server` or `tgcli sync --follow` running, archive message reads and `sync jobs list` use read-only SQLite. `sync status`, `sync jobs add/retry/cancel`, `sync --once`, and `channels list` use the owner's private local socket even if MCP is disabled. Other commands that open writable services may still report a busy store while owner routing is being completed.
+- With `tgcli server` or `tgcli sync --follow` running, archive message reads, cached tags, and `sync jobs list` use read-only SQLite. Live reads and commands that change the store use the owner's private local socket even if MCP is disabled. Without an owner, the CLI claims the store itself for those commands. A live owner whose socket is unavailable must be fixed or stopped before retrying an owner-dependent command; the CLI does not open a second session.
 - Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
