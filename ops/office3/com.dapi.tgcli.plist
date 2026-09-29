@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dapi.tgcli</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/danil/.local/bin/tgcli</string>
+    <string>server</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TGCLI_SERVICE_MANAGER</key>
+    <string>launchd</string>
+    <key>TGCLI_STORE</key>
+    <string>/Users/danil/Library/Application Support/tgcli</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/danil/code/tgcli/log/tgcli.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/danil/code/tgcli/log/tgcli.error.log</string>
+</dict>
+</plist>
