@@ -55,6 +55,25 @@ describe('telegram auth recovery', () => {
     expect(logSpy).toHaveBeenCalledWith('Existing session is valid.');
   });
 
+  it('explains that QR cannot bypass a pending Telegram 2FA challenge', async () => {
+    const pendingError = Object.assign(new Error('SESSION_PASSWORD_NEEDED'), { code: 401 });
+    const client = {
+      getMe: vi.fn().mockRejectedValue(pendingError),
+      start: vi.fn().mockResolvedValue({}),
+    };
+    const tc = Object.create(TelegramClient.prototype);
+    tc.options = { useQr: true };
+    tc.phoneNumber = '';
+    tc.client = client;
+    tc._buildStartParams = vi.fn().mockReturnValue({ qrCodeHandler: vi.fn() });
+
+    expect(await tc.login()).toBe(true);
+    expect(client.start).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(
+      'Telegram is already waiting for 2FA on this session. Another QR scan will not complete this login without the password.',
+    );
+  });
+
   it('login retries once after session reset by recreating the MTProto client', async () => {
     const firstClient = {
       start: vi.fn().mockRejectedValue(new Error('Session is reset')),

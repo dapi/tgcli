@@ -121,6 +121,50 @@ describe('cli auth command', () => {
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 
+  it('receives QR login updates and verifies the saved session before reporting success', async () => {
+    const loginClient = {
+      destroy: vi.fn().mockResolvedValue(undefined),
+      login: vi.fn().mockResolvedValue(true),
+    };
+    const statusClient = {
+      destroy: vi.fn().mockResolvedValue(undefined),
+      getCurrentUser: vi.fn().mockResolvedValue({ id: 123456789n }),
+    };
+    createTelegramClientMock
+      .mockReturnValueOnce({ telegramClient: loginClient })
+      .mockReturnValueOnce({ telegramClient: statusClient });
+
+    await runAuthLogin({ json: false, timeoutMs: null }, { qr: true });
+
+    expect(createTelegramClientMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      useQr: true,
+      disableUpdates: false,
+    }));
+    expect(createTelegramClientMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      disableUpdates: true,
+    }));
+    expect(loginClient.destroy).toHaveBeenCalledTimes(1);
+    expect(statusClient.getCurrentUser).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith('QR login verified from saved session.');
+    expect(statusClient.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report QR login success when the saved session is unauthorized', async () => {
+    createTelegramClientMock
+      .mockReturnValueOnce({ telegramClient: {
+        destroy: vi.fn().mockResolvedValue(undefined),
+        login: vi.fn().mockResolvedValue(true),
+      } })
+      .mockReturnValueOnce({ telegramClient: {
+        destroy: vi.fn().mockResolvedValue(undefined),
+        getCurrentUser: vi.fn().mockResolvedValue(null),
+      } });
+
+    await expect(runAuthLogin({ json: false, timeoutMs: null }, { qr: true }))
+      .rejects.toThrow('saved session is not authorized');
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Authenticated.'));
+  });
+
   it('treats symlinked tgcli binaries as the cli entrypoint', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-cli-entrypoint-'));
     const symlinkPath = path.join(tmpDir, 'tgcli');

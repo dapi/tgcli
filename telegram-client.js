@@ -686,6 +686,7 @@ class TelegramClient {
     this.updateEmitter = new EventEmitter();
     this.updatesRunning = false;
     this.rawUpdateHandler = null;
+    this.activeReadline = null;
     const userUpdates = options.updates ?? {};
     const updatesConfig = {
       ...userUpdates,
@@ -757,6 +758,11 @@ class TelegramClient {
     await this._recreateClient();
   }
 
+  _isPasswordRequiredError(error) {
+    const message = (error?.errorMessage || error?.text || error?.message || '').toUpperCase();
+    return message.includes('SESSION_PASSWORD_NEEDED');
+  }
+
   _isUnauthorizedError(error) {
     if (!error) return false;
     const code = error.code || error.status || error.errorCode;
@@ -775,11 +781,13 @@ class TelegramClient {
   }
 
   async _isAuthorized() {
+    this.authNeedsPassword = false;
     try {
       const user = await this.client.getMe();
       await this._verifyIdentity(user);
       return true;
     } catch (error) {
+      this.authNeedsPassword = this._isPasswordRequiredError(error);
       if (this._isUnauthorizedError(error)) {
         return false;
       }
@@ -812,9 +820,11 @@ class TelegramClient {
         input: process.stdin,
         output: process.stdout,
       });
+      this.activeReadline = rl;
 
       return new Promise(resolve => {
         rl.question(prompt, answer => {
+          if (this.activeReadline === rl) this.activeReadline = null;
           rl.close();
           resolve(answer.trim());
         });
@@ -841,6 +851,7 @@ class TelegramClient {
       output: process.stdout,
       terminal: true,
     });
+    this.activeReadline = rl;
     rl.stdoutMuted = false;
     const writeOutput = rl._writeToOutput.bind(rl);
     rl._writeToOutput = (stringToWrite) => {
@@ -851,6 +862,7 @@ class TelegramClient {
 
     return new Promise(resolve => {
       rl.question(prompt, answer => {
+        if (this.activeReadline === rl) this.activeReadline = null;
         rl.output.write('\n');
         rl.close();
         resolve(answer.trim());
@@ -862,12 +874,23 @@ class TelegramClient {
   _buildStartParams() {
     const startParams = {
       password: async () => {
-        const value = await this._askHiddenQuestion('Enter your 2FA password (leave empty if not enabled): ');
-        return value.length ? value : undefined;
+        const prompt = this.options.useQr
+          ? 'Telegram requires your 2FA password to finish QR login: '
+          : 'Enter your Telegram 2FA password: ';
+        while (true) {
+          const value = await this._askHiddenQuestion(prompt);
+          if (value.length > 0) return value;
+          console.log('A 2FA password is required here. Press Ctrl+C to cancel login.');
+        }
       },
     };
 
     if (this.options.useQr) {
+      startParams.invalidCodeCallback = (type) => {
+        if (type === 'password') {
+          console.log('Telegram rejected that 2FA password. Try again.');
+        }
+      };
       startParams.qrCodeHandler = (url, expiresAt) => {
         const expiresLabel = expiresAt instanceof Date && !Number.isNaN(expiresAt.getTime())
           ? expiresAt.toISOString()
@@ -876,8 +899,8 @@ class TelegramClient {
         qrcode.generate(url, { small: true }, (rendered) => {
           console.log(rendered);
         });
-        console.log(`QR login URL: ${url}`);
         console.log(`QR expires at: ${expiresLabel}`);
+        console.log('Waiting for Telegram to confirm the QR login...');
       };
     } else {
       startParams.phone = this.phoneNumber;
@@ -907,6 +930,10 @@ class TelegramClient {
   async login(retriedAfterReset = false, retriedAfterSessionReset = false) {
     try {
       const hasExistingSession = await this._isAuthorized();
+
+      if (!hasExistingSession && this.options.useQr && this.authNeedsPassword) {
+        console.log('Telegram is already waiting for 2FA on this session. Another QR scan will not complete this login without the password.');
+      }
 
       if (!hasExistingSession && !this.options.useQr && !this.phoneNumber) {
         throw new Error('TELEGRAM_PHONE_NUMBER is not configured.');
@@ -1740,6 +1767,10 @@ class TelegramClient {
   }
 
   async destroy() {
+    if (this.activeReadline) {
+      this.activeReadline.close();
+      this.activeReadline = null;
+    }
     if (this.updatesRunning) {
       try {
         await this.client.stopUpdatesLoop();
