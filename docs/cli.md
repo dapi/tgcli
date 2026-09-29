@@ -27,7 +27,7 @@ under `<base-store>/accounts/<id>`.
 
 ## auth
 - auth
-  - Interactive login (Telegram MTProto), then bootstrap sync.
+  - Interactive login (Telegram MTProto). `--follow` continues with archive sync.
   - Flags: --follow, --force-sms, --qr
 - auth status
 - auth logout
@@ -43,7 +43,7 @@ under `<base-store>/accounts/<id>`.
 
 ## server
 - server
-  - Start the background sync service (MCP HTTP server runs only when enabled in config).
+  - Start the background sync service and private CLI socket (MCP HTTP server runs only when enabled in config).
 
 ## service
 - service install

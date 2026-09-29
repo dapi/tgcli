@@ -24,8 +24,11 @@ const {
 }));
 
 vi.mock('../store-lock.js', () => ({
+  acquireOwnerLock: (...args) => ({ release: acquireStoreLockMock(...args) }),
   acquireStoreLock: acquireStoreLockMock,
   acquireReadLock: vi.fn(),
+  isPidAlive: vi.fn(),
+  parseStoreLock: vi.fn(),
   readStoreLock: vi.fn(),
 }));
 

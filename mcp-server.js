@@ -11,6 +11,8 @@ import { loadConfig, validateConfig } from "./core/config.js";
 import { createServices } from "./core/services.js";
 import { resolveStoreDir } from "./core/store.js";
 import { acquireOwnerLock } from "./store-lock.js";
+import { startOwnerIpc } from "./core/owner-ipc.js";
+import { createOwnerOperations } from "./core/owner-operations.js";
 
 const SERVICE_STATE_FILE = "service-state.json";
 
@@ -2103,8 +2105,13 @@ async function handleSessionRequest(req, res) {
   await record.transport.handleRequest(req, res);
 }
 
-await initializeTelegram().then(() => {
-  ownerLock.update({ state: "ready" });
+let stopOwnerIpc;
+await initializeTelegram().then(async () => {
+  stopOwnerIpc = await startOwnerIpc({
+    storeDir,
+    ownerLock,
+    operations: createOwnerOperations({ telegramClient, messageSyncService }),
+  });
 }).catch(async (error) => {
   console.error(`[startup] Telegram initialization failed: ${error?.message ?? error}`);
   await messageSyncService.shutdown().catch(() => {});
@@ -2206,6 +2213,13 @@ async function shutdown() {
     console.error(`[shutdown] failed to update owner state: ${error?.message ?? error}`);
   }
   console.log("[shutdown] received termination signal, closing resources...");
+  if (stopOwnerIpc) {
+    try {
+      await stopOwnerIpc();
+    } catch (error) {
+      console.error(`[shutdown] failed to close owner IPC: ${error?.message ?? error}`);
+    }
+  }
   const closeTasks = [];
   for (const record of sessions.values()) {
     const task = closeSessionRecord(record, "shutdown");

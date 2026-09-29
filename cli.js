@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import readline from 'readline';
 import { Command, Option } from 'commander';
 
-import { acquireStoreLock, acquireReadLock, readStoreLock } from './store-lock.js';
+import { acquireOwnerLock, acquireStoreLock, acquireReadLock, isPidAlive, parseStoreLock, readStoreLock } from './store-lock.js';
 import {
   addAccount,
   bindAccountIdentity,
@@ -19,6 +19,9 @@ import {
 import { loadConfig, normalizeConfig, saveConfig, validateConfig } from './core/config.js';
 import { createMessageSyncService, createServices, createTelegramClient } from './core/services.js';
 import { ArchiveReader } from './core/archive-reader.js';
+import { runOwnerOperation } from './core/owner-operations.js';
+import { createOwnerOperations } from './core/owner-operations.js';
+import { startOwnerIpc } from './core/owner-ipc.js';
 import {
   buildSendErrorPayload,
   buildSendSuccessPayload,
@@ -1535,38 +1538,57 @@ async function runAuthLogout(globalFlags) {
 
 async function runAuthLogin(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
-  let release = null;
+  let ownerLock = null;
+  let stopOwnerIpc = null;
   let telegramClient = null;
   let messageSyncService = null;
+  let handedOff = false;
   const cleanup = async () => {
-    if (messageSyncService) {
-      const currentService = messageSyncService;
-      messageSyncService = null;
-      await currentService.shutdown();
-    }
-    if (telegramClient) {
-      const currentClient = telegramClient;
-      telegramClient = null;
-      await currentClient.destroy();
-    }
-    if (release) {
-      const currentRelease = release;
-      release = null;
-      currentRelease();
+    try {
+      if (stopOwnerIpc) {
+        const stop = stopOwnerIpc;
+        stopOwnerIpc = null;
+        await stop();
+      }
+    } finally {
+      try {
+        if (messageSyncService) {
+          const currentService = messageSyncService;
+          messageSyncService = null;
+          await currentService.shutdown();
+        }
+      } finally {
+        try {
+          if (telegramClient) {
+            const currentClient = telegramClient;
+            telegramClient = null;
+            await currentClient.destroy();
+          }
+        } finally {
+          if (ownerLock) {
+            const currentOwner = ownerLock;
+            ownerLock = null;
+            currentOwner.release();
+          }
+        }
+      }
     }
   };
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
     const config = await ensureStoreConfig(storeDir);
-    release = acquireStoreLock(storeDir);
-    ({ telegramClient } = createTelegramClient({
-      storeDir,
-      config,
-      forceSms: options.forceSms,
-      useQr: options.qr,
-      disableUpdates: !options.follow,
-    }));
+    ownerLock = acquireOwnerLock(storeDir, {
+      kind: options.follow ? 'auth' : 'transient',
+      state: options.follow ? 'starting' : 'transient',
+    });
     try {
+      ({ telegramClient } = createTelegramClient({
+        storeDir,
+        config,
+        forceSms: options.forceSms,
+        useQr: options.qr,
+        disableUpdates: !options.follow,
+      }));
       const loginSuccess = await telegramClient.login();
       if (!loginSuccess) {
         throw new Error('Failed to login to Telegram.');
@@ -1590,9 +1612,12 @@ async function runAuthLogin(globalFlags, options = {}) {
         await telegramClient.startUpdates();
         messageSyncService.startRealtimeSync();
         messageSyncService.resumePendingJobs();
+        stopOwnerIpc = await startOwnerIpc({ storeDir, ownerLock,
+          operations: createOwnerOperations({ telegramClient, messageSyncService }) });
         await withShutdown(async () => {
           await cleanup();
         });
+        handedOff = true;
         return;
       }
 
@@ -1607,7 +1632,7 @@ async function runAuthLogin(globalFlags, options = {}) {
         console.log(`Authenticated. ${AUTH_SYNC_HINT}`);
       }
     } finally {
-      if (!options.follow) {
+      if (!handedOff) {
         await cleanup();
       }
     }
@@ -1691,12 +1716,55 @@ async function runSync(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
     const idleExitMs = parseDuration(options.idleExit || '30s');
     const follow = options.follow || !options.once;
-
+    const ownershipDeadline = Date.now() + (timeoutMs ?? 30000);
+    let ownerLock;
+    while (!ownerLock && Date.now() < ownershipDeadline) {
+      const current = parseStoreLock(readStoreLock(storeDir).info);
+      if (current?.pid && isPidAlive(current.pid) && current.state === 'ready' && current.socketPath &&
+          !(follow && current.kind === 'sync-once')) {
+        if (follow) {
+          await runOwnerOperation({ storeDir, operation: 'sync.status', timeoutMs: Math.max(1, ownershipDeadline - Date.now()) });
+          if (!globalFlags.json) console.log(`Sync is already running in process ${current.pid}.`);
+          else writeJson({ running: true, ownerPid: current.pid });
+        } else {
+          const result = await runOwnerOperation({ storeDir, operation: 'sync.once',
+            args: { idleExitMs }, timeoutMs: timeoutMs ?? idleExitMs + 30000 });
+          if (globalFlags.json) writeJson({ ok: true, mode: 'once', queue: result.queue });
+          else console.log('Sync complete.');
+        }
+        return;
+      }
+      try {
+        ownerLock = acquireOwnerLock(storeDir, { kind: follow ? 'sync' : 'sync-once', state: 'starting' });
+      } catch (error) {
+        if (!error.message.includes('locked') && !error.message.includes('readers') &&
+            !error.message.includes('recovery')) throw error;
+        await delay(100);
+      }
+    }
+    if (!ownerLock) throw new Error('Timed out waiting for the store owner');
+    let services;
+    let stopOwnerIpc;
+    let handedOff = false;
+    const cleanup = async () => {
+      try {
+        if (stopOwnerIpc) await stopOwnerIpc();
+      } finally {
+        try {
+          if (services) {
+            await services.messageSyncService.shutdown();
+            await services.telegramClient.destroy();
+          }
+        } finally {
+          ownerLock.release();
+        }
+      }
+    };
     try {
+      services = createServices({ storeDir });
+      const { telegramClient, messageSyncService } = services;
       if (!(await telegramClient.isAuthorized().catch((err) => { process.stderr.write(`Auth check failed: ${err.message}\n`); return false; }))) {
         throw new Error('Not authenticated. Run `node cli.js auth` first.');
       }
@@ -1707,14 +1775,13 @@ async function runSync(globalFlags, options = {}) {
       if (follow) {
         await telegramClient.startUpdates();
         messageSyncService.startRealtimeSync();
-        if (!globalFlags.json) {
-          console.log('Sync running. Press Ctrl+C to stop.');
-        }
-        await withShutdown(async () => {
-          await messageSyncService.shutdown();
-          await telegramClient.destroy();
-          release();
-        });
+      }
+      stopOwnerIpc = await startOwnerIpc({ storeDir, ownerLock,
+        operations: createOwnerOperations(services) });
+      if (follow) {
+        if (!globalFlags.json) console.log('Sync running. Press Ctrl+C to stop.');
+        await withShutdown(cleanup);
+        handedOff = true;
         return;
       }
 
@@ -1726,11 +1793,7 @@ async function runSync(globalFlags, options = {}) {
         console.log('Sync complete.');
       }
     } finally {
-      if (!follow) {
-        await messageSyncService.shutdown();
-        await telegramClient.destroy();
-        release();
-      }
+      if (!handedOff) await cleanup();
     }
   }, timeoutMs);
 }
@@ -2119,18 +2182,35 @@ async function runSyncStatus(globalFlags) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      const queue = messageSyncService.getQueueStats();
-      if (globalFlags.json) {
-        writeJson({ queue });
-      } else {
-        console.log(`QUEUE: pending=${queue.pending} in_progress=${queue.in_progress} idle=${queue.idle} error=${queue.error}`);
-        console.log(`PROCESSING: ${queue.processing}`);
+    const owner = readStoreLock(storeDir);
+    const ownerInfo = parseStoreLock(owner.info);
+    const ownerAlive = ownerInfo?.pid && isPidAlive(ownerInfo.pid);
+    let queue;
+    if (ownerAlive && ownerInfo.state === 'ready') {
+      try {
+        ({ queue } = await runOwnerOperation({ storeDir, operation: 'sync.status', timeoutMs: timeoutMs ?? 30000 }));
+      } catch (error) {
+        if (!['OWNER_UNAVAILABLE', 'OWNER_STARTING', 'UNKNOWN_RESULT', 'ECONNREFUSED', 'ENOENT'].includes(error.code)) throw error;
       }
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
+    }
+    if (!queue) {
+      let reader;
+      try {
+        reader = new ArchiveReader(storeDir);
+        queue = reader.getQueueStats();
+      } catch (error) {
+        if (error.name !== 'ArchiveUnavailableError' || error.cause?.code !== 'SQLITE_CANTOPEN') throw error;
+        queue = { pending: 0, in_progress: 0, idle: 0, error: 0, processing: false };
+      } finally {
+        reader?.close();
+      }
+      if (ownerAlive) queue.processing = null;
+    }
+    if (globalFlags.json) {
+      writeJson({ queue });
+    } else {
+      console.log(`QUEUE: pending=${queue.pending} in_progress=${queue.in_progress} idle=${queue.idle} error=${queue.error}`);
+      console.log(`PROCESSING: ${queue.processing ?? 'unknown'}`);
     }
   }, timeoutMs);
 }
@@ -2144,9 +2224,9 @@ async function runSyncJobsList(globalFlags, options = {}) {
       throw new Error(`Unknown status: ${status}`);
     }
     const limit = parsePositiveInt(options.limit, '--limit') ?? 100;
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    const reader = new ArchiveReader(storeDir);
     try {
-      const jobs = messageSyncService.listJobs({
+      const jobs = reader.listJobs({
         status,
         channelId: options.channel ?? null,
         limit,
@@ -2160,8 +2240,7 @@ async function runSyncJobsList(globalFlags, options = {}) {
         }
       }
     } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
+      reader.close();
     }
   }, timeoutMs);
 }
@@ -2173,28 +2252,11 @@ async function runSyncJobsAdd(globalFlags, options = {}) {
       throw new Error('--chat is required');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      if (!(await telegramClient.isAuthorized().catch(() => false))) {
-        throw new Error('Not authenticated. Run `node cli.js auth` first.');
-      }
-      const depth = parsePositiveInt(options.depth, '--depth');
-      const job = messageSyncService.addJob(options.chat, {
-        depth,
-        minDate: options.minDate ?? null,
-      });
-      void messageSyncService.processQueue();
-      if (globalFlags.json) {
-        writeJson(job);
-      } else {
-        console.log(`Job scheduled for ${job.channel_id} (#${job.id}).`);
-      }
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
-    }
+    const depth = parsePositiveInt(options.depth, '--depth');
+    const job = await runOwnerOperation({ storeDir, operation: 'sync.jobs.add',
+      args: { chat: options.chat, depth, minDate: options.minDate ?? null }, timeoutMs: timeoutMs ?? 30000 });
+    if (globalFlags.json) writeJson(job);
+    else console.log(`Job scheduled for ${job.channel_id} (#${job.id}).`);
   }, timeoutMs);
 }
 
@@ -2211,28 +2273,10 @@ async function runSyncJobsRetry(globalFlags, options = {}) {
       throw new Error('Use --all-errors without --job-id/--channel');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      const result = messageSyncService.retryJobs({
-        jobId,
-        channelId,
-        allErrors,
-      });
-      const authed = await telegramClient.isAuthorized().catch(() => false);
-      if (authed && result.updated > 0) {
-        void messageSyncService.processQueue();
-      }
-      if (globalFlags.json) {
-        writeJson(result);
-      } else {
-        console.log(`Re-queued ${result.updated} job(s).`);
-      }
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
-    }
+    const result = await runOwnerOperation({ storeDir, operation: 'sync.jobs.retry',
+      args: { jobId, channelId, allErrors }, timeoutMs: timeoutMs ?? 30000 });
+    if (globalFlags.json) writeJson(result);
+    else console.log(`Re-queued ${result.updated} job(s).`);
   }, timeoutMs);
 }
 
@@ -2248,23 +2292,10 @@ async function runSyncJobsCancel(globalFlags, options = {}) {
       throw new Error('Use --job-id or --channel, not both');
     }
     const storeDir = resolveStoreDir();
-    const release = acquireStoreLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      const result = messageSyncService.cancelJobs({
-        jobId,
-        channelId,
-      });
-      if (globalFlags.json) {
-        writeJson(result);
-      } else {
-        console.log(`Canceled ${result.canceled} job(s).`);
-      }
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
-    }
+    const result = await runOwnerOperation({ storeDir, operation: 'sync.jobs.cancel',
+      args: { jobId, channelId }, timeoutMs: timeoutMs ?? 30000 });
+    if (globalFlags.json) writeJson(result);
+    else console.log(`Canceled ${result.canceled} job(s).`);
   }, timeoutMs);
 }
 
@@ -2323,29 +2354,16 @@ async function runChannelsList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
     const storeDir = resolveStoreDir();
-    const release = acquireReadLock(storeDir);
-    const { telegramClient, messageSyncService } = createServices({ storeDir });
-    try {
-      const limit = parsePositiveInt(options.limit, '--limit') ?? 50;
-      if (!(await telegramClient.isAuthorized().catch(() => false))) {
-        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+    const limit = parsePositiveInt(options.limit, '--limit') ?? 50;
+    const dialogs = await runOwnerOperation({ storeDir, operation: 'channels.list',
+      args: { query: options.query ?? null, limit }, timeoutMs: timeoutMs ?? 30000 });
+    if (globalFlags.json) {
+      writeJson(dialogs);
+    } else {
+      for (const dialog of dialogs) {
+        const label = dialog.title || dialog.username || dialog.id;
+        console.log(`${label} (${dialog.id})`);
       }
-      const dialogs = options.query
-        ? await telegramClient.searchDialogs(options.query, limit)
-        : await telegramClient.listDialogs(limit);
-
-      if (globalFlags.json) {
-        writeJson(dialogs);
-      } else {
-        for (const dialog of dialogs) {
-          const label = dialog.title || dialog.username || dialog.id;
-          console.log(`${label} (${dialog.id})`);
-        }
-      }
-    } finally {
-      await messageSyncService.shutdown();
-      await telegramClient.destroy();
-      release();
     }
   }, timeoutMs);
 }

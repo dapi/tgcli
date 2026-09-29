@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -73,5 +73,45 @@ describe('server store ownership', () => {
     expect(owner.info.ownerId).not.toBe('dead-owner');
     expect(parseStoreLock(readStoreLock(storeDir).info)?.ownerId).toBe(owner.info.ownerId);
     expect(fs.existsSync(path.join(storeDir, 'LOCK.reclaim'))).toBe(false);
+  });
+
+  it('allows only one simultaneous process to claim a free store', async () => {
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-server-race-'));
+    const lockModule = fileURLToPath(new URL('../store-lock.js', import.meta.url));
+    const barrier = path.join(storeDir, 'go');
+    const script = `
+      import fs from 'node:fs';
+      import { setTimeout as delay } from 'node:timers/promises';
+      import { acquireOwnerLock } from ${JSON.stringify(lockModule)};
+      const [storeDir, barrier] = process.argv.slice(1);
+      fs.writeFileSync(storeDir + '/ready-' + process.pid, '');
+      while (!fs.existsSync(barrier)) await delay(5);
+      try {
+        const lock = acquireOwnerLock(storeDir);
+        fs.writeFileSync(storeDir + '/winner-' + process.pid, '');
+        await delay(200);
+        lock.release();
+      } catch {
+        fs.writeFileSync(storeDir + '/loser-' + process.pid, '');
+      }
+    `;
+    const run = () => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script, storeDir, barrier], {
+        stdio: 'ignore',
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => resolve(code));
+    });
+    const first = run();
+    const second = run();
+    const readyDeadline = Date.now() + 5000;
+    while (fs.readdirSync(storeDir).filter((name) => name.startsWith('ready-')).length < 2) {
+      if (Date.now() > readyDeadline) throw new Error('Lock contenders did not start');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    fs.writeFileSync(barrier, '');
+    expect(await Promise.all([first, second])).toEqual([0, 0]);
+    expect(fs.readdirSync(storeDir).filter((name) => name.startsWith('winner-'))).toHaveLength(1);
+    expect(fs.readdirSync(storeDir).filter((name) => name.startsWith('loser-'))).toHaveLength(1);
   });
 });
