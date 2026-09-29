@@ -13,8 +13,8 @@ installed_plist="$HOME/Library/LaunchAgents/$label.plist"
 log_dir="$repo_root/log"
 domain="gui/$(id -u)"
 
-if [ "$("$HOME/.local/bin/tgcli" --version)" != "2.9.0" ]; then
-  echo "Install tgcli 2.9.0 through dotfiles before loading the service" >&2
+if [ "$("$HOME/.local/bin/tgcli" --version)" != "2.9.1" ]; then
+  echo "Install tgcli 2.9.1 through dotfiles before loading the service" >&2
   exit 2
 fi
 
@@ -23,7 +23,7 @@ chmod 700 "$log_dir"
 touch "$log_dir/tgcli.log" "$log_dir/tgcli.error.log"
 chmod 600 "$log_dir/tgcli.log" "$log_dir/tgcli.error.log"
 if [ -f "$installed_plist" ]; then
-  cp -p "$installed_plist" "$installed_plist.pre-2.9.0"
+  cp -p "$installed_plist" "$installed_plist.pre-2.9.1"
 fi
 launchctl bootout "$domain/$label" 2>/dev/null || true
 cp "$source_plist" "$installed_plist"
