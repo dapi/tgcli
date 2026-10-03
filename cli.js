@@ -327,6 +327,13 @@ function buildProgram() {
     .option('--before <n>', 'Messages before')
     .option('--after <n>', 'Messages after')
     .action(withGlobalOptions((globalFlags, options) => runMessagesContext(globalFlags, options)));
+  messages
+    .command('transcribe')
+    .description('Transcribe voice or video messages (requires Telegram Premium)')
+    .option('--chat <id|username>', 'Channel identifier')
+    .option('--id <msgId>', 'Message id (repeatable)', collectList)
+    .option('--wait <seconds>', 'How long to wait for the final text (default 60)')
+    .action(withGlobalOptions((globalFlags, options) => runMessagesTranscribe(globalFlags, options)));
 
   const send = program.command('send').description('Send text, photos, or files');
   send
@@ -3059,6 +3066,51 @@ async function runMessagesShow(globalFlags, options = {}) {
       }
     } finally {
       await close();
+    }
+  }, timeoutMs);
+}
+
+async function runMessagesTranscribe(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.chat) {
+      throw new Error('--chat is required');
+    }
+    const ids = (Array.isArray(options.id) ? options.id : [options.id]).filter(Boolean);
+    if (!ids.length) {
+      throw new Error('--id is required');
+    }
+    const waitMs = options.wait ? parsePositiveInt(options.wait, '--wait') * 1000 : undefined;
+    const storeDir = resolveStoreDir();
+    const release = acquireReadLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const results = [];
+      for (const rawId of ids) {
+        const messageId = parsePositiveInt(rawId, '--id');
+        try {
+          const transcription = await telegramClient.transcribeVoice(options.chat, messageId, { waitMs });
+          results.push({ messageId, ...transcription });
+        } catch (error) {
+          results.push({ messageId, error: error?.message ?? String(error) });
+        }
+      }
+
+      const payload = { chat: String(options.chat), results };
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        for (const item of results) {
+          console.log(`#${item.messageId}${item.pending ? ' (incomplete)' : ''}: ${item.error ? `error: ${item.error}` : item.text}`);
+        }
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
     }
   }, timeoutMs);
 }

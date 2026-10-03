@@ -650,6 +650,23 @@ function resolveDownloadLocation(media) {
   return null;
 }
 
+export function floodWaitSeconds(error) {
+  if (Number.isFinite(error?.seconds)) {
+    return Number(error.seconds);
+  }
+  const match = /FLOOD_WAIT_(\d+)/.exec(String(error?.message ?? ''));
+  return match ? Number(match[1]) : null;
+}
+
+export function formatTranscription(result, overrides = {}) {
+  return {
+    text: result?.text ?? '',
+    pending: overrides.pending ?? Boolean(result?.pending),
+    transcriptionId: result?.transcriptionId != null ? String(result.transcriptionId) : null,
+    trialRemaining: result?.trialRemainsNum ?? null,
+  };
+}
+
 export function normalizeChannelId(channelId) {
   if (typeof channelId === 'number') {
     return channelId;
@@ -1394,6 +1411,69 @@ class TelegramClient {
       mimeType: summary?.mimeType ?? null,
       downloadedAt: new Date().toISOString(),
     };
+  }
+
+  async transcribeVoice(channelId, messageId, options = {}) {
+    await this.ensureLogin();
+    const peer = await this.client.resolvePeer(normalizeChannelId(channelId));
+    const msgId = Number(messageId);
+    const waitMs = Number.isFinite(options.waitMs) ? options.waitMs : 60000;
+
+    const first = await this._callWithFloodWait(
+      { _: 'messages.transcribeAudio', peer, msgId },
+      options,
+    );
+    if (!first.pending) {
+      return formatTranscription(first);
+    }
+
+    // The finished text arrives as an update, not in the reply. Polling instead
+    // of waiting spends the rate limit and returns the unrefined first pass.
+    const finished = await this._awaitTranscribedAudio(first.transcriptionId, msgId, waitMs);
+    return formatTranscription(finished ?? first, { pending: !finished });
+  }
+
+  async _callWithFloodWait(request, options = {}) {
+    const maxWaitSeconds = Number.isFinite(options.maxFloodWaitSeconds)
+      ? options.maxFloodWaitSeconds
+      : 60;
+    for (;;) {
+      try {
+        return await this.client.call(request);
+      } catch (error) {
+        const seconds = floodWaitSeconds(error);
+        if (seconds === null || seconds > maxWaitSeconds) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 500));
+      }
+    }
+  }
+
+  async _awaitTranscribedAudio(transcriptionId, msgId, waitMs) {
+    await this.startUpdates();
+    return new Promise((resolve) => {
+      let unsubscribe = () => {};
+      const timer = setTimeout(() => {
+        unsubscribe();
+        resolve(null);
+      }, waitMs);
+      unsubscribe = this.onUpdate((info) => {
+        const update = info?.update;
+        if (update?._ !== 'updateTranscribedAudio' || update.pending) {
+          return;
+        }
+        if (Number(update.msgId) !== msgId) {
+          return;
+        }
+        if (transcriptionId != null && String(update.transcriptionId) !== String(transcriptionId)) {
+          return;
+        }
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(update);
+      });
+    });
   }
 
   async listContacts() {

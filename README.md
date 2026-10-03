@@ -117,6 +117,7 @@ tgcli auth
 tgcli sync --follow
 tgcli messages list --chat @username --limit 20
 tgcli messages search "course" --chat @channel --source archive
+tgcli messages transcribe --chat @username --id 123 --id 124
 tgcli send text --to @username --message "hello"
 tgcli send text --to @username --message "**hi**" --parse-mode markdown
 tgcli send text --to @username --message "done" --reply-to 123
@@ -146,7 +147,7 @@ tgcli server         Run background sync service (MCP optional)
 tgcli owner request  Inspect a recent request after an uncertain result
 tgcli service        Install/start/stop/status/logs for background service
 tgcli channels       List/search channels
-tgcli messages       List/search messages
+tgcli messages       List/search/transcribe messages
 tgcli send           Send text, photos, or files
 tgcli media          Download media
 tgcli topics         Forum topics
