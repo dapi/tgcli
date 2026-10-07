@@ -1,3 +1,5 @@
+import { runTelegramRequest } from './request-context.js';
+
 export class OwnerCoordinator {
   constructor({ maxLive = 4 } = {}) {
     if (!Number.isInteger(maxLive) || maxLive < 1) throw new Error('maxLive must be positive');
@@ -25,7 +27,7 @@ export class OwnerCoordinator {
     }
     try {
       if (signal?.aborted) throw this.abortedError();
-      return await work();
+      return await runTelegramRequest(signal, work);
     } finally {
       this.release();
     }

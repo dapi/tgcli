@@ -81,6 +81,8 @@ under `<base-store>/accounts/<id>`.
 
 The default `--source archive` uses only the local archive. An empty result does not trigger a Telegram request; choose `--source live` or `--source both` explicitly when needed.
 
+For owner requests, `--timeout` also cancels Telegram RPCs and file uploads. Cancellation releases the live slot but cannot retract a mutation already transmitted to Telegram. Inspect `tgcli owner request <requestId> --json` after `UNKNOWN_RESULT`; a recorded `unknown` outcome does not prove that a send failed. Persistent sync jobs are independent of the timeout of the request that queued them. Service shutdown cancels owner requests and exits with an error if cleanup remains stuck for 10 seconds.
+
 ## send
 - send text --to <id|username> --message "..." [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--no-preview] [--silent] [--no-forwards] [--schedule <iso>]
 - send photo --to <id|username> --photo PATH [--caption] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--retries <n>] [--retry-backoff <ms|constant|linear|exponential>]

@@ -3,17 +3,48 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { readStoreLock } from '../store-lock.js';
+import { acquireOwnerLock, readStoreLock } from '../store-lock.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const serverPath = path.join(root, 'mcp-server.js');
 const cliPath = path.join(root, 'cli.js');
 const loaderPath = fileURLToPath(new URL('./fixtures/mock-telegram-loader.mjs', import.meta.url));
 const selectorAvailable = !spawnSync('port-selector', ['--list'], { cwd: root }).error;
+
+it('exits a stuck shutdown without releasing ownership while accepted work is still alive', async () => {
+  storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-shutdown-stalled-'));
+  fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+    apiId: 12345, apiHash: 'fixture-only', phoneNumber: '+1234567890', mcp: { enabled: false },
+  }));
+  const marker = path.join(storeDir, 'stalled-request');
+  server = spawn(process.execPath, ['--experimental-loader', loaderPath, serverPath], {
+    cwd: root,
+    env: { ...process.env, TGCLI_STORE: storeDir, TGCLI_MOCK_STALLED_DIALOGS: marker,
+      TELEGRAM_PROXY: 'socks5://127.0.0.1:1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  server.stdout.on('data', chunk => { output += chunk; });
+  server.stderr.on('data', chunk => { output += chunk; });
+  await vi.waitFor(() => expect(output).toContain('MCP disabled; running sync and local CLI service.'), { timeout: 8000 });
+  const pending = runCli(['channels', 'list', '--timeout', '30s']);
+  await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true));
+  const exited = new Promise(resolve => server.once('exit', resolve));
+  server.kill('SIGTERM');
+  await vi.waitFor(() => expect(JSON.parse(readStoreLock(storeDir).info).state).toBe('stopping'));
+  expect(() => acquireOwnerLock(storeDir)).toThrow(/locked/);
+  expect(await exited).toBe(1);
+  expect(output).toContain('Cleanup exceeded its deadline');
+  expect(JSON.parse((await pending).stderr).code).toBe('UNKNOWN_RESULT');
+  // The old metadata may survive an abrupt exit, but its guard must not.
+  const recovered = acquireOwnerLock(storeDir);
+  recovered.release();
+  expect(readStoreLock(storeDir).exists).toBe(false);
+}, 20000);
 
 let storeDir;
 let server;

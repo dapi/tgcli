@@ -6,6 +6,7 @@ import { Message, PeersIndex, _messageMediaFromTl } from '@mtcute/core';
 import { normalizeChannelId, summarizeMedia } from './telegram-client.js';
 import { ArchiveQueries, normalizeChannelKey, parseIsoDate, formatContactRow, safeParseJson, normalizeTag } from './core/archive-queries.js';
 import { resolveStoreDir, resolveStorePaths } from './core/store.js';
+import { getTelegramRequestSignal, runTelegramRequest } from './core/request-context.js';
 
 const DEFAULT_DB_PATH = resolveStorePaths(resolveStoreDir()).dbPath;
 const DEFAULT_TARGET_MESSAGES = 1000;
@@ -1680,6 +1681,8 @@ export default class MessageSyncService extends ArchiveQueries {
   }
 
   async processQueue() {
+    // A persistent sync job belongs to the worker, not the request that queued it.
+    if (getTelegramRequestSignal()) return runTelegramRequest(undefined, () => this.processQueue());
     if (this.processing) {
       return;
     }
@@ -2634,7 +2637,7 @@ export default class MessageSyncService extends ArchiveQueries {
       oldestMessageDate: oldestMessageDate,
     });
 
-    void this._syncNewerMessages(batchChannelId);
+    void runTelegramRequest(undefined, () => this._syncNewerMessages(batchChannelId));
   }
 
   async _syncNewerMessages(channelId) {

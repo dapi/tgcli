@@ -19,6 +19,7 @@ import readline from 'readline';
 import { Readable } from 'stream';
 import { nodeReadableToFuman } from '@fuman/node';
 import { resolveStoreDir, resolveStorePaths } from './core/store.js';
+import { getTelegramRequestSignal, requestTelegramClient } from './core/request-context.js';
 
 const timeoutPatchKey = Symbol.for('tgcli.timeoutPatch');
 if (!globalThis[timeoutPatchKey]) {
@@ -184,6 +185,8 @@ function resolveReplyTo(options = {}) {
 
 function buildTextSendParams(options = {}) {
   const params = {};
+  const signal = getTelegramRequestSignal();
+  if (signal) params.abortSignal = signal;
   const replyTo = resolveReplyTo(options);
   if (replyTo) params.replyTo = replyTo;
   if (options.noPreview) params.disableWebPreview = true;
@@ -196,6 +199,8 @@ function buildTextSendParams(options = {}) {
 
 function buildMediaSendParams(options = {}) {
   const params = {};
+  const signal = getTelegramRequestSignal();
+  if (signal) params.abortSignal = signal;
   const replyTo = resolveReplyTo(options);
   if (replyTo) params.replyTo = replyTo;
   if (options.silent) params.silent = true;
@@ -671,6 +676,14 @@ export function normalizeChannelId(channelId) {
 }
 
 class TelegramClient {
+  get client() {
+    return requestTelegramClient(this.baseClient);
+  }
+
+  set client(value) {
+    this.baseClient = value;
+  }
+
   constructor(apiId, apiHash, phoneNumber, sessionPath = DEFAULT_SESSION_PATH, options = {}) {
     this.apiId = coerceApiId(apiId);
     this.apiHash = sanitizeString(apiHash);
@@ -1320,7 +1333,11 @@ class TelegramClient {
     const chatId = peer?._ === 'inputPeerSelf'
       ? String(prepared.peerRef)
       : this._extractPeerId(peer);
-    const normalizedMedia = await this.client._normalizeInputMedia(prepared.media, { uploadPeer: peer });
+    const signal = getTelegramRequestSignal();
+    const normalizedMedia = await this.client._normalizeInputMedia(prepared.media, {
+      uploadPeer: peer,
+      ...(signal ? { abortSignal: signal } : {}),
+    });
     const request = {
       ...prepared.request,
       peer,
@@ -1385,7 +1402,8 @@ class TelegramClient {
     } else {
       assertSafeDownloadTarget(targetPath, accountDownloadDir);
     }
-    await this.client.downloadToFile(targetPath, location);
+    const signal = getTelegramRequestSignal();
+    await this.client.downloadToFile(targetPath, location, ...(signal ? [{ abortSignal: signal }] : []));
     const stats = fs.statSync(targetPath);
 
     return {

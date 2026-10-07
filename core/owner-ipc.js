@@ -135,6 +135,8 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
   await removeStaleOwnerSocket(socketPath);
   const sockets = new Set();
   const tasks = new Set();
+  const controllers = new Set();
+  let stopping = false;
   const outcomes = new Map();
   const pruneOutcomes = () => {
     const cutoff = Date.now() - 60 * 60 * 1000;
@@ -147,6 +149,10 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
     }
   };
   const server = net.createServer((socket) => {
+    if (stopping) {
+      socket.destroy();
+      return;
+    }
     sockets.add(socket);
     socket.setTimeout(30000, () => socket.destroy());
     socket.on('close', () => sockets.delete(socket));
@@ -178,6 +184,7 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
       }
       socket.setTimeout(Math.max(1000, request.deadline - Date.now() + 1000), () => socket.destroy());
       const controller = new AbortController();
+      controllers.add(controller);
       const timeout = setTimeout(() => controller.abort(), Math.max(1, request.deadline - Date.now()));
       try {
         const result = await operation(request.args, { signal: controller.signal, requestId: request.id });
@@ -194,15 +201,20 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
         }
         writeFrame(socket, { type: 'complete', id: request.id });
       } catch (error) {
+        // Cancelling a transmitted mutation cannot prove it did not happen.
+        if (controller.signal.aborted && error.code !== 'OWNER_BUSY') {
+          error = protocolError('UNKNOWN_RESULT', 'Owner request was cancelled; its result is unknown');
+        }
         const outcome = tracked ? outcomes.get(request.id) : null;
         if (outcome && outcome.status === 'running') {
-          outcome.status = 'failed';
+          outcome.status = error.code === 'UNKNOWN_RESULT' ? 'unknown' : 'failed';
           outcome.code = error.code || 'OPERATION_FAILED';
           outcome.finishedAt = Date.now();
         }
         throw error;
       } finally {
         clearTimeout(timeout);
+        controllers.delete(controller);
       }
     })().catch((error) => {
       if (!socket.destroyed) writeFrame(socket, { type: 'error', code: error.code || 'OPERATION_FAILED',
@@ -223,14 +235,20 @@ export async function startOwnerIpc({ storeDir, ownerLock, operations }) {
     try { fs.unlinkSync(socketPath); } catch { /* no endpoint was created */ }
     throw error;
   }
-  return async () => {
+  let stopPromise;
+  return () => stopPromise ??= (async () => {
+    stopping = true;
     ownerLock.update({ state: 'stopping' });
     const closed = new Promise((resolve) => server.close(resolve));
-    await Promise.allSettled([...tasks]);
+    for (const controller of controllers) {
+      controller.abort(protocolError('UNKNOWN_RESULT', 'Store owner is stopping'));
+    }
+    // Also unblock clients still waiting to finish the IPC handshake.
     for (const socket of sockets) socket.destroy();
+    await Promise.allSettled([...tasks]);
     await closed;
     try { fs.unlinkSync(socketPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  };
+  })();
 }
 
 export async function callOwner({ storeDir, operation, args, timeoutMs = 30000 }) {

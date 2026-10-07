@@ -17,6 +17,10 @@ export default class MockTelegramClient {
   async initializeDialogCache() { return true; }
   async listDialogs() {
     this.dialogCalls += 1;
+    if (process.env.TGCLI_MOCK_STALLED_DIALOGS && this.dialogCalls > 1) {
+      fs.writeFileSync(process.env.TGCLI_MOCK_STALLED_DIALOGS, 'started');
+      return new Promise(() => {});
+    }
     if (process.env.TGCLI_MOCK_DIALOG_FLOOD) throw new Error('FLOOD_WAIT_23');
     if (process.env.TGCLI_MOCK_DIALOG_FLOOD_ONCE && this.dialogCalls === 1) {
       throw new Error('FLOOD_WAIT_23');

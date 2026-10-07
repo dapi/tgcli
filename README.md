@@ -135,6 +135,8 @@ On startup, the server reuses dialogs already recorded in the archive registry. 
 
 If a command times out after the owner accepted it, the error includes a request ID. Check `tgcli owner request <requestId> --json` before retrying a send or another change. Request outcomes remain in the running owner's memory for one hour; a restart makes prior outcomes unknown.
 
+An explicit CLI timeout cancels that request's Telegram RPCs and media upload, so stalled network calls release their live slots. A cancelled operation is recorded as `unknown` with code `UNKNOWN_RESULT`: cancellation cannot undo a request already transmitted to Telegram. Persistent sync jobs keep running independently. Live MCP tools have a 30-second deadline and honor caller cancellation. Shutdown cancels owner requests and waits for cleanup; if cleanup is still stuck after 10 seconds, the owner exits with an error and its guard is released by the OS.
+
 ## Commands
 
 ```bash

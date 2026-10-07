@@ -35,6 +35,8 @@ import { ArchiveReader } from './core/archive-reader.js';
 import { runOwnerOperation } from './core/owner-operations.js';
 import { createOwnerOperations } from './core/owner-operations.js';
 import { callOwner, startOwnerIpc } from './core/owner-ipc.js';
+import { startShutdownWatchdog } from './core/shutdown.js';
+import { getTelegramRequestSignal } from './core/request-context.js';
 import {
   buildSendErrorPayload,
   buildSendSuccessPayload,
@@ -1756,6 +1758,7 @@ async function runAuthLogin(globalFlags, options = {}) {
   let messageSyncService = null;
   let handedOff = false;
   const cleanup = async () => {
+    const stopWatchdog = startShutdownWatchdog();
     let cleanupError;
     if (stopOwnerIpc) {
       const stop = stopOwnerIpc;
@@ -1777,6 +1780,7 @@ async function runAuthLogin(globalFlags, options = {}) {
       ownerLock = null;
       try { currentOwner.release(); } catch (error) { cleanupError ??= error; }
     }
+    stopWatchdog();
     if (cleanupError) throw cleanupError;
   };
   return runWithTimeout(async () => {
@@ -1959,6 +1963,7 @@ async function runSync(globalFlags, options = {}) {
     let stopOwnerIpc;
     let handedOff = false;
     const cleanup = async () => {
+      const stopWatchdog = startShutdownWatchdog();
       let cleanupError;
       if (stopOwnerIpc) {
         try { await stopOwnerIpc(); } catch (error) { cleanupError = error; }
@@ -1968,6 +1973,7 @@ async function runSync(globalFlags, options = {}) {
         try { await services.telegramClient.destroy(); } catch (error) { cleanupError ??= error; }
       }
       try { ownerLock.release(); } catch (error) { cleanupError ??= error; }
+      stopWatchdog();
       if (cleanupError) throw cleanupError;
     };
     try {
@@ -3248,7 +3254,7 @@ async function runSendPhoto(globalFlags, options = {}) {
             retries,
             retryBackoff,
             timeoutMs,
-            sleep: (ms) => delay(ms),
+            sleep: (ms) => delay(ms, undefined, { signal: getTelegramRequestSignal() }),
             onRetry: (details) => logSendRetry(details, globalFlags),
           },
         );

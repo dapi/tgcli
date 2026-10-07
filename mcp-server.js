@@ -14,6 +14,7 @@ import { acquireOwnerLock } from "./store-lock.js";
 import { startOwnerIpc } from "./core/owner-ipc.js";
 import { createOwnerOperations } from "./core/owner-operations.js";
 import { OwnerCoordinator } from "./core/owner-coordinator.js";
+import { startShutdownWatchdog } from "./core/shutdown.js";
 import { parseRequiredWaitSeconds } from "./core/retry.js";
 
 const SERVICE_STATE_FILE = "service-state.json";
@@ -744,9 +745,13 @@ function createServerInstance() {
   ]);
   const registerTool = (name, description, schema, handler) => server.tool(
     name, description, schema,
-    (...args) => archiveOnlyTools.has(name)
-      ? handler(...args)
-      : ownerCoordinator.runLive(() => handler(...args)),
+    (...args) => {
+      if (archiveOnlyTools.has(name)) return handler(...args);
+      const callerSignal = args.at(-1)?.signal;
+      const timeout = AbortSignal.timeout(30000);
+      const signal = callerSignal ? AbortSignal.any([timeout, callerSignal]) : timeout;
+      return ownerCoordinator.runLive(() => handler(...args), { signal });
+    },
   );
 
   registerTool(
@@ -2243,6 +2248,7 @@ async function shutdown() {
     return;
   }
   shuttingDown = true;
+  const stopWatchdog = startShutdownWatchdog();
   try {
     ownerLock.update({ state: "stopping" });
   } catch (error) {
@@ -2298,6 +2304,7 @@ async function shutdown() {
     stoppedAt: new Date().toISOString(),
     pid: null,
   });
+  stopWatchdog();
 }
 
 const handleShutdownSignal = () => {

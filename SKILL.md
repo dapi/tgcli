@@ -56,6 +56,7 @@ tgcli auth
 - With `tgcli server` or `tgcli sync --follow` running, archive message reads, cached tags, and `sync jobs list` use read-only SQLite. Live reads and commands that change the store use the owner's private local socket even if MCP is disabled. Without an owner, the CLI claims the store itself for those commands. A live owner whose socket is unavailable must be fixed or stopped before retrying an owner-dependent command; the CLI does not open a second session.
 - When Telegram rate-limits the server's startup dialog refresh, the server remains available but pauses pending sync work. `tgcli sync status --json` shows `dialogRefreshDeferred: true`; retry the refresh later with `tgcli sync --once` through the same owner. Do not repeatedly retry during `FLOOD_WAIT`.
 - If a live command reports `UNKNOWN_RESULT`, do not retry a send or other non-idempotent change blindly. Use the returned `requestId` with `tgcli owner request <requestId> --json` while the same owner is running; inspect the chat or archive before retrying if the request is still running or its outcome is unknown.
+- `--timeout` cancels the request's Telegram RPCs and uploads on the owner, freeing its live slot. It cannot retract a mutation already transmitted to Telegram: its outcome may remain `unknown` with code `UNKNOWN_RESULT`. Use a longer explicit timeout for large files. Background sync jobs continue independently of the request that queued them.
 - Never use `--since`; tgcli uses `--after` and `--before` with ISO timestamps.
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
@@ -332,9 +333,11 @@ Do not write `tgcli sync --chat ...`; queue work with `sync jobs add --chat ...`
 tgcli owner request <requestId> --json --timeout 30s
 ```
 
-The active owner retains recent request outcomes in memory. `completed` means its handler finished successfully; `failed` includes an error code. `running` means it has not finished, and `unknown` means the active owner has no record (for example, after a restart).
+The active owner retains recent request outcomes in memory. `completed` means its handler finished successfully; `failed` includes an error code. `running` means it has not finished. `unknown` with code `UNKNOWN_RESULT` means cancellation left the result uncertain; `unknown` without a code means the active owner has no record (for example, after a restart). Neither form proves a send did not happen.
 
 ### Service (Background Sync Daemon)
+
+Shutdown cancels accepted owner requests and waits for cleanup. If cleanup remains stuck for 10 seconds, the owning process exits with an error; the OS then releases its store guard. Live MCP tools have a 30-second deadline and honor caller cancellation.
 
 ```bash
 tgcli service status --json --timeout 30s

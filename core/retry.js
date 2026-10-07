@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'timers/promises';
+import { getTelegramRequestSignal } from './request-context.js';
 
 function formatErrorMessage(error) {
   if (error instanceof Error && error.message) {
@@ -53,6 +54,8 @@ async function withSendRetry(fn, options = {}) {
   const maxAttempts = maxRetries + 1;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const signal = getTelegramRequestSignal();
+    signal?.throwIfAborted();
     try {
       const result = await fn();
       return { result, retryLog, attempts: attempt };
@@ -91,7 +94,7 @@ async function withSendRetry(fn, options = {}) {
         process.stderr.write(`Retry ${attempt}/${maxRetries}: ${classified.type.toUpperCase()} — ${classified.message}. Waiting ${waitSeconds}s...\n`);
       }
 
-      await delay(waitSeconds * 1000);
+      await delay(waitSeconds * 1000, undefined, { signal });
     }
   }
 }
