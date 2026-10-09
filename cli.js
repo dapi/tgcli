@@ -4660,6 +4660,8 @@ const ownerCliHandlers = {
   'messages search': runMessagesSearch,
   'messages show': runMessagesShow,
   'messages context': runMessagesContext,
+  'messages buttons list': runMessageButtonsList,
+  'messages buttons click': runMessageButtonClick,
   'send text': runSendText,
   'send photo': runSendPhoto,
   'send file': runSendFile,

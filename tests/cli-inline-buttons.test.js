@@ -30,6 +30,7 @@ vi.mock('../core/store.js', () => ({
 
 import {
   buildProgram,
+  classifyCliRoute,
   runMessageButtonClick,
   runMessageButtonsList,
 } from '../cli.js';
@@ -86,6 +87,8 @@ describe('messages buttons CLI', () => {
     const buttons = messages.commands.find((command) => command.name() === 'buttons');
 
     expect(buttons.commands.map((command) => command.name())).toEqual(['list', 'click']);
+    expect(classifyCliRoute('messages buttons list')).toBe('owner');
+    expect(classifyCliRoute('messages buttons click')).toBe('owner');
   });
 
   it('lists button metadata under a read lock', async () => {
