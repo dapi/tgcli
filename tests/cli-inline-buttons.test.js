@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const {
   acquireReadLockMock,
@@ -31,6 +34,7 @@ vi.mock('../core/store.js', () => ({
 import {
   buildProgram,
   classifyCliRoute,
+  executeOwnerCliCommand,
   runMessageButtonClick,
   runMessageButtonsList,
 } from '../cli.js';
@@ -128,5 +132,22 @@ describe('messages buttons CLI', () => {
       messageId: 42,
     });
     expect(writeRelease).toHaveBeenCalled();
+  });
+
+  it('uses the owner services without acquiring another store lock', async () => {
+    const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tgcli-buttons-owner-'));
+    const { telegramClient, messageSyncService } = createRuntime();
+    try {
+      const result = await executeOwnerCliCommand({
+        commandPath: 'messages buttons list',
+        args: [{ chat: '@BotFather', id: '42' }],
+        flags: { json: true, timeoutMs: null },
+      }, { telegramClient, messageSyncService }, storeDir);
+      expect(JSON.parse(result.stdout)).toMatchObject({ messageId: 42 });
+      expect(acquireReadLockMock).not.toHaveBeenCalled();
+      expect(telegramClient.destroy).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(storeDir, { recursive: true, force: true });
+    }
   });
 });

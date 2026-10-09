@@ -787,7 +787,7 @@ function withGlobalOptions(handler) {
           return;
         }
       }
-      const archiveMessages = name.startsWith('messages ') &&
+      const archiveMessages = ['messages list', 'messages search', 'messages show', 'messages context'].includes(name) &&
         resolveSource(actionArgs.at(-1)?.source) === 'archive';
       const archiveTags = name === 'tags list' || name === 'tags search';
       const configWrite = name === 'config set' || name === 'config unset';
