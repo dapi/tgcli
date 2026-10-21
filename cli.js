@@ -32,7 +32,7 @@ import {
   createTelegramClient as createTelegramClientBase,
 } from './core/services.js';
 import { ArchiveReader } from './core/archive-reader.js';
-import { runOwnerOperation } from './core/owner-operations.js';
+import { registerCliModule, runOwnerOperation } from './core/owner-operations.js';
 import { createOwnerOperations } from './core/owner-operations.js';
 import { callOwner, startOwnerIpc } from './core/owner-ipc.js';
 import { startShutdownWatchdog } from './core/shutdown.js';
@@ -4837,6 +4837,8 @@ export {
   shouldRunMain,
   writeError,
 };
+
+registerCliModule({ executeOwnerCliCommand });
 
 if (isCliEntrypoint()) {
   await main();

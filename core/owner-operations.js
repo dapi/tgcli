@@ -6,6 +6,9 @@ import { OwnerCoordinator } from './owner-coordinator.js';
 import { acquireOwnerLock, isPidAlive, parseStoreLock, readStoreLock } from '../store-lock.js';
 
 let cliModulePromise;
+export function registerCliModule(cliModule) {
+  cliModulePromise = Promise.resolve(cliModule);
+}
 function loadCliModule() {
   cliModulePromise ??= import('../cli.js').catch((error) => {
     cliModulePromise = null;
