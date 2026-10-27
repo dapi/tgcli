@@ -1255,7 +1255,7 @@ class TelegramClient {
     const parseMode = normalizeParseMode(options.parseMode);
     if (options.expectedText !== undefined) {
       const expected = applyParseMode(options.expectedText, parseMode);
-      const expectedPlain = typeof expected === 'string' ? expected : expected.text;
+      const expectedPlain = (typeof expected === 'string' ? expected : expected.text).trimEnd();
       if (current.text !== expectedPlain) {
         throw new Error('Current caption differs from --expected-text-file; no edit was made.');
       }
@@ -1264,7 +1264,7 @@ class TelegramClient {
       throw new Error('Caption cannot be empty.');
     }
     const parsed = applyParseMode(caption, parseMode);
-    const plain = typeof parsed === 'string' ? parsed : parsed.text;
+    const plain = (typeof parsed === 'string' ? parsed : parsed.text).trimEnd();
     if (plain.length > 1024) {
       throw new Error('Photo caption exceeds 1024 characters.');
     }

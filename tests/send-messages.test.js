@@ -166,13 +166,13 @@ describe('editPhotoCaption', () => {
       .mockResolvedValueOnce({ id: 77, text: 'old', media: { type: 'photo' } })
       .mockResolvedValueOnce({ id: 77, text: 'new', media: { type: 'photo' }, urls: ['https://example.com'] });
 
-    const result = await tc.editPhotoCaption('@channel', 77, 'new', {
-      parseMode: 'markdown', expectedText: 'old',
+    const result = await tc.editPhotoCaption('@channel', 77, 'new\n', {
+      parseMode: 'markdown', expectedText: 'old\n',
     });
 
     expect(tc.client.editMessage).toHaveBeenCalledWith({
       chatId: '@channel', message: 77,
-      text: { text: 'new', entities: [{ type: 'bold' }] },
+      text: { text: 'new\n', entities: [{ type: 'bold' }] },
     });
     expect(result).toEqual({ messageId: 77, media: { type: 'photo' }, urls: ['https://example.com'] });
   });
