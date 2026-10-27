@@ -321,6 +321,15 @@ function buildProgram() {
     .option('--source <source>', 'archive|live|both')
     .action(withGlobalOptions((globalFlags, options) => runMessagesShow(globalFlags, options)));
   messages
+    .command('edit-caption')
+    .description('Edit the caption of an existing photo message')
+    .requiredOption('--chat <id|username>', 'Chat containing the photo')
+    .requiredOption('--id <msgId>', 'Photo message id')
+    .requiredOption('--caption-file <path>', 'UTF-8 file with the new caption')
+    .requiredOption('--expected-text-file <path>', 'UTF-8 file with the current caption; edit is refused if it differs')
+    .option('--parse-mode <mode>', 'markdown|html|none', 'none')
+    .action(withGlobalOptions((globalFlags, options) => runMessagesEditCaption(globalFlags, options)));
+  messages
     .command('context')
     .description('Show message context')
     .option('--chat <id|username>', 'Channel identifier')
@@ -730,6 +739,11 @@ function normalizeOwnerArgs(name, args) {
     const inputField = name === 'send photo' ? 'photo' : name === 'send file' ? 'file' : null;
     if (inputField && options[inputField]) options[inputField] = path.resolve(options[inputField]);
     if (name === 'media download' && options.output) options.output = path.resolve(options.output);
+    if (name === 'messages edit-caption') {
+      for (const field of ['captionFile', 'expectedTextFile']) {
+        if (options[field]) options[field] = path.resolve(options[field]);
+      }
+    }
   }
   return normalized;
 }
@@ -3085,6 +3099,38 @@ async function runMessagesShow(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runMessagesEditCaption(globalFlags, options = {}) {
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    const messageId = parsePositiveInt(options.id, '--id');
+    const parseMode = parseSendParseMode(options.parseMode);
+    const caption = fs.readFileSync(options.captionFile, 'utf8');
+    const expectedText = fs.readFileSync(options.expectedTextFile, 'utf8');
+    const storeDir = resolveStoreDir();
+    const release = acquireStoreLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `tgcli auth` first.');
+      }
+      const result = await telegramClient.editPhotoCaption(options.chat, messageId, caption, {
+        parseMode,
+        expectedText,
+      });
+      if (globalFlags.json) {
+        writeJson({ ok: true, chat_id: options.chat, message_id: result.messageId,
+          media_type: result.media?.type, urls: result.urls });
+      } else {
+        console.log(`Photo caption edited (${result.messageId}).`);
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
 async function runMessagesContext(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -4659,6 +4705,7 @@ const ownerCliHandlers = {
   'messages list': runMessagesList,
   'messages search': runMessagesSearch,
   'messages show': runMessagesShow,
+  'messages edit-caption': runMessagesEditCaption,
   'messages context': runMessagesContext,
   'messages buttons list': runMessageButtonsList,
   'messages buttons click': runMessageButtonClick,

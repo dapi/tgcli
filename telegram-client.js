@@ -1246,6 +1246,40 @@ class TelegramClient {
     return this._serializeMessage(message, peer);
   }
 
+  async editPhotoCaption(channelId, messageId, caption, options = {}) {
+    await this.ensureLogin();
+    const current = await this.getMessageById(channelId, messageId);
+    if (!current || current.media?.type !== 'photo') {
+      throw new Error('Photo message not found.');
+    }
+    const parseMode = normalizeParseMode(options.parseMode);
+    if (options.expectedText !== undefined) {
+      const expected = applyParseMode(options.expectedText, parseMode);
+      const expectedPlain = typeof expected === 'string' ? expected : expected.text;
+      if (current.text !== expectedPlain) {
+        throw new Error('Current caption differs from --expected-text-file; no edit was made.');
+      }
+    }
+    if (typeof caption !== 'string' || !caption.trim()) {
+      throw new Error('Caption cannot be empty.');
+    }
+    const parsed = applyParseMode(caption, parseMode);
+    const plain = typeof parsed === 'string' ? parsed : parsed.text;
+    if (plain.length > 1024) {
+      throw new Error('Photo caption exceeds 1024 characters.');
+    }
+    await this.client.editMessage({
+      chatId: normalizeChannelId(channelId),
+      message: Number(messageId),
+      text: parsed,
+    });
+    const updated = await this.getMessageById(channelId, messageId);
+    if (updated?.text !== plain) {
+      throw new Error('Caption edit could not be confirmed by read-back.');
+    }
+    return { messageId: updated.id, media: updated.media, urls: updated.urls };
+  }
+
   async clickInlineButton(channelId, messageId, options = {}) {
     await this.ensureLogin();
     const row = Number(options.row);

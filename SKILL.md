@@ -5,7 +5,7 @@ description: >
   Trigger on requests about channel/chat history, digests/news, mentions, files, topics,
   contacts, groups, tags, media downloads, multi-account profiles, and archive/sync status.
   Also covers group admin (join requests, rename, members, invite links, join/leave).
-  For edit/delete/reactions, use telegram-mcp instead.
+  Photo-caption edits are supported with an exact-current-text guard; for other edits, delete, forward, and reactions, use telegram-mcp instead.
 ---
 
 # tgcli
@@ -36,7 +36,7 @@ tgcli auth
 
 | Use tgcli for | Use telegram-mcp for |
 |-|-|
-| Read/search/archive messages | edit/delete/forward |
+| Read/search/archive messages, edit an existing photo caption | other edits/delete/forward |
 | Inspect/click callback buttons | reactions |
 | Send text/photo/files and topic posts | advanced interactive actions |
 | Forum topics listing/search | |
@@ -214,6 +214,24 @@ tgcli send file --to <id|@username> --file /path/to/photo.jpg --force-document -
 ### Photo Preview vs Document Upload
 
 - Use `tgcli send photo` for local PNG/JPG when Telegram should render a photo preview.
+
+### Edit an Existing Photo Caption
+
+`edit-caption` replaces only the caption of an existing photo. It requires an
+expected-current-caption file and refuses to edit if the live message differs.
+Prepare UTF-8 files with the exact existing and proposed Markdown or HTML;
+the current-text guard compares rendered text, and the media remains attached.
+Use absolute file paths when the background owner handles the command.
+
+```bash
+tgcli messages edit-caption --chat @channel --id 123 \
+  --expected-text-file /absolute/path/old.md \
+  --caption-file /absolute/path/new.md \
+  --parse-mode markdown --json --timeout 90s
+tgcli messages show --chat @channel --id 123 --source live --json --timeout 90s
+```
+
+Do not retry an edit blindly after an unknown outcome; read the message first.
 - Use `tgcli send file` for generic uploads and explicit document-style attachments.
 - For draft/approval flow, send to Saved Messages first, review in Telegram, then resend to the target chat.
 
@@ -463,7 +481,7 @@ Alternative without systemd service (one-shot or foreground):
 
 ### Should not trigger
 
-- "edit/delete/forward telegram message"
+- "delete/forward telegram message" or edit media other than a photo caption
 - "react with emoji to message"
 - "ban/kick/promote user with granular permissions"
 

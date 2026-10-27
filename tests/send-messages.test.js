@@ -158,6 +158,37 @@ describe('sendTextMessage parse-mode', () => {
   });
 });
 
+describe('editPhotoCaption', () => {
+  it('checks the exact current text and preserves the photo while editing linked caption text', async () => {
+    const tc = createMockClient();
+    tc.client.editMessage = vi.fn().mockResolvedValue({ id: 77 });
+    tc.getMessageById = vi.fn()
+      .mockResolvedValueOnce({ id: 77, text: 'old', media: { type: 'photo' } })
+      .mockResolvedValueOnce({ id: 77, text: 'new', media: { type: 'photo' }, urls: ['https://example.com'] });
+
+    const result = await tc.editPhotoCaption('@channel', 77, 'new', {
+      parseMode: 'markdown', expectedText: 'old',
+    });
+
+    expect(tc.client.editMessage).toHaveBeenCalledWith({
+      chatId: '@channel', message: 77,
+      text: { text: 'new', entities: [{ type: 'bold' }] },
+    });
+    expect(result).toEqual({ messageId: 77, media: { type: 'photo' }, urls: ['https://example.com'] });
+  });
+
+  it('refuses to edit when the caption changed', async () => {
+    const tc = createMockClient();
+    tc.client.editMessage = vi.fn();
+    tc.getMessageById = vi.fn().mockResolvedValue({ id: 77, text: 'different', media: { type: 'photo' } });
+
+    await expect(tc.editPhotoCaption('@channel', 77, 'new', {
+      parseMode: 'markdown', expectedText: 'old',
+    })).rejects.toThrow('Current caption differs');
+    expect(tc.client.editMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('sendTextMessage new send parameters', () => {
   let tc;
 
