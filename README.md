@@ -119,6 +119,7 @@ tgcli messages list --chat @username --limit 20
 tgcli messages search "course" --chat @channel --source archive
 tgcli messages buttons list --chat @BotFather --id 123 --json
 tgcli messages buttons click --chat @BotFather --id 123 --row 1 --column 1 --json
+tgcli webapp serve --bot @BotFather
 tgcli send text --to @username --message "hello"
 tgcli send text --to @username --message "**hi**" --parse-mode markdown
 tgcli send text --to @username --message "done" --reply-to 123
@@ -154,6 +155,7 @@ tgcli messages       List/search messages
 tgcli send           Send text, photos, or files
 tgcli media          Download media
 tgcli topics         Forum topics
+tgcli webapp         Open an authenticated bot Mini App through a one-time local handoff
 tgcli tags           Channel tags
 tgcli metadata       Channel metadata cache
 tgcli contacts       Contacts and people
@@ -178,6 +180,17 @@ Button listings contain display text, type, coordinates, and whether the button
 is actionable. Callback payload bytes are never printed. The click command only
 executes Telegram callback buttons; it does not open URL or Web App buttons and
 does not support password-protected callbacks.
+
+### bot Mini Apps
+
+Use `tgcli webapp serve --bot @BotFather` to request the bot's main Mini App
+with the authenticated tgcli session. The command prints a random, one-time
+`127.0.0.1` URL. Open it in a browser on the same machine within 90 seconds;
+tgcli redirects that single request to Telegram's signed HTTPS URL, then closes
+the local server. The signed URL is never printed by tgcli. Keep browser logs
+and traces private because they may contain the signed URL after the redirect.
+The command requires a bot with a main Mini App and a working tgcli service or
+authenticated local session.
 
 ### send text
 

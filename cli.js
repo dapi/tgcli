@@ -49,6 +49,7 @@ import {
 import { parseLaunchdList, resolveServiceIdentity } from './core/service-identity.js';
 import { resolveStoreDir as resolveStoreDirBase } from './core/store.js';
 import { formatErrorMessage, parseRequiredWaitSeconds, withSendRetry } from './core/retry.js';
+import { startWebAppHandoff } from './core/webapp-handoff.js';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
 const SERVICE_STATE_FILE = 'service-state.json';
@@ -432,6 +433,13 @@ function buildProgram() {
     .option('--query <text>', 'Search query')
     .option('--limit <n>', 'Limit results')
     .action(withGlobalOptions((globalFlags, options) => runTopicsSearch(globalFlags, options)));
+
+  const webapp = program.command('webapp').description('Open an authenticated Telegram Mini App');
+  webapp
+    .command('serve')
+    .description('Serve a one-time local redirect to a bot main Mini App without printing its signed URL')
+    .requiredOption('--bot <username>', 'Bot username, for example @BotFather')
+    .action(withGlobalOptions((globalFlags, options) => runWebappServe(globalFlags, options)));
 
   const tags = program.command('tags').description('Channel tags');
   tags
@@ -3518,6 +3526,27 @@ async function runMediaDownload(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runWebappServe(globalFlags, options = {}) {
+  const bot = String(options.bot ?? '').trim();
+  if (!/^@[A-Za-z0-9_]{5,32}$/.test(bot)) {
+    throw new Error('--bot must be a Telegram bot username starting with @.');
+  }
+  const { url } = await runOwnerOperation({
+    storeDir: resolveStoreDir(),
+    operation: 'webapp.main',
+    args: { bot },
+    timeoutMs: globalFlags.timeoutMs ?? 30000,
+  });
+  const handoff = await startWebAppHandoff(url);
+  if (globalFlags.json) {
+    writeJson({ url: handoff.url, expiresInSeconds: 90, bot });
+  } else {
+    console.log(`Open ${handoff.url} in an isolated browser within 90 seconds.`);
+    console.log('The signed Telegram URL is passed to the browser once and is not printed.');
+  }
+  await handoff.wait();
+}
+
 async function runTopicsList(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -4774,6 +4803,7 @@ const localCliCommands = new Set([
   'service logs',
   'doctor',
   'channels list',
+  'webapp serve',
 ]);
 
 export function classifyCliRoute(name) {

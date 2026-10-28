@@ -82,6 +82,12 @@ export function createOwnerOperations({ storeDir, telegramClient, messageSyncSer
         ? telegramClient.searchDialogs(query, limit)
         : telegramClient.listDialogs(limit);
     }, context),
+    'webapp.main': ({ bot }, context) => coordinator.runLive(async () => {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `tgcli auth` first.');
+      }
+      return telegramClient.openMainWebApp(bot);
+    }, context),
     'cli.execute': (request, context) => coordinator.runLive(async () => {
       const { executeOwnerCliCommand } = await loadCliModule();
       return executeOwnerCliCommand(request, { telegramClient, messageSyncService }, storeDir);

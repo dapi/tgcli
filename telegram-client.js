@@ -1326,6 +1326,20 @@ class TelegramClient {
     };
   }
 
+  async openMainWebApp(botRef) {
+    await this.ensureLogin();
+    const webview = await this.client.openWebview({
+      bot: botRef,
+      webview: { type: 'main' },
+      platform: 'macos',
+    });
+    const url = new URL(webview.url);
+    if (url.protocol !== 'https:') {
+      throw new Error('Telegram returned a non-HTTPS Mini App URL.');
+    }
+    return { url: url.href };
+  }
+
   async getMessageContext(channelId, messageId, options = {}) {
     await this.ensureLogin();
     const safeBefore = Number.isFinite(options.before) && options.before >= 0

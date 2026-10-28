@@ -62,6 +62,7 @@ tgcli auth
 - Never use `tgcli sync --chat ...`; top-level `sync` only runs workers via `--once` / `--follow`.
 - To sync a specific chat: `tgcli channels sync --chat <id|@username> --enable` and/or `tgcli sync jobs add --chat <id|@username>`, then run `tgcli sync --once` or `tgcli sync --follow`.
 - If command shape is uncertain, verify it first with `tgcli <command> --help` instead of guessing flags.
+- For a bot's main Mini App, run `tgcli webapp serve --bot @BotFather`, then open its one-time loopback URL in an isolated browser on the same machine within 90 seconds. The signed Telegram URL is not printed by tgcli; do not print browser URLs, logs, or traces containing its authentication data. This does not use Telegram Web.
 - Select named accounts with the global `--account <id|alias|phone>` option before the command, or with `TGCLI_ACCOUNT`. Selection precedence is `--account` → `TGCLI_ACCOUNT` → `default`.
 - The `default` profile keeps the legacy store and existing authorization. Never run `auth logout`, move a session, or copy session files merely because a named profile is not visible.
 - Named profiles have physically isolated config, session, messages database, locks, downloads, sync jobs, and service state. Always use the same account selector for auth, reads, writes, sync, and service commands belonging to that profile.
