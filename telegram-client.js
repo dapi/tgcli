@@ -276,7 +276,9 @@ function buildTextSendParams(options = {}) {
   if (options.silent) params.silent = true;
   if (options.noForwards || options.noforwards) params.forbidForwards = true;
   const scheduleDate = resolveScheduleDate(options);
-  if (scheduleDate) params.scheduleDate = scheduleDate;
+  // mtcute's high-level send methods take `schedule` (Date, or a number in MILLISECONDS),
+  // not `scheduleDate`; resolveScheduleDate() returns unix seconds, so pass a Date.
+  if (scheduleDate) params.schedule = new Date(scheduleDate * 1000);
   return Object.keys(params).length ? params : undefined;
 }
 
@@ -289,7 +291,9 @@ function buildMediaSendParams(options = {}) {
   if (options.silent) params.silent = true;
   if (options.noForwards || options.noforwards) params.forbidForwards = true;
   const scheduleDate = resolveScheduleDate(options);
-  if (scheduleDate) params.scheduleDate = scheduleDate;
+  // mtcute's high-level send methods take `schedule` (Date, or a number in MILLISECONDS),
+  // not `scheduleDate`; resolveScheduleDate() returns unix seconds, so pass a Date.
+  if (scheduleDate) params.schedule = new Date(scheduleDate * 1000);
   if (options.captionAbove) params.invert = true;
   return Object.keys(params).length ? params : undefined;
 }

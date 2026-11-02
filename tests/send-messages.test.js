@@ -206,10 +206,10 @@ describe('sendTextMessage new send parameters', () => {
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { forbidForwards: true });
   });
 
-  it('--schedule passes scheduleDate as unix timestamp in params', async () => {
+  it('--schedule passes `schedule` (Date) to mtcute, not the ignored `scheduleDate`', async () => {
     const scheduleDate = Math.floor(Date.now() / 1000) + 3600;
     await tc.sendTextMessage('@chat', 'hello', { scheduleDate });
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { scheduleDate });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { schedule: new Date(scheduleDate * 1000) });
   });
 
   it('combined silent + replyTo passes both in params', async () => {
@@ -233,7 +233,7 @@ describe('sendTextMessage new send parameters', () => {
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', {
       silent: true,
       forbidForwards: true,
-      scheduleDate,
+      schedule: new Date(scheduleDate * 1000),
     });
   });
 
@@ -246,7 +246,7 @@ describe('sendTextMessage new send parameters', () => {
     const iso = '2027-01-15T09:00:00Z';
     const expected = Math.floor(new Date(iso).getTime() / 1000);
     await tc.sendTextMessage('@chat', 'hello', { schedule: iso });
-    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { scheduleDate: expected });
+    expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', { schedule: new Date(expected * 1000) });
   });
 
   it('no new params still sends undefined params (backward compat)', async () => {
@@ -281,7 +281,7 @@ describe('sendFileMessage new send parameters', () => {
   it('--schedule passes scheduleDate in params', async () => {
     const scheduleDate = Math.floor(Date.now() / 1000) + 3600;
     await tc.sendFileMessage('@chat', temp.filePath, { scheduleDate });
-    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { scheduleDate });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { schedule: new Date(scheduleDate * 1000) });
   });
 
   it('--caption-above passes invertMedia: true in params', async () => {
@@ -325,7 +325,7 @@ describe('sendFileMessage new send parameters', () => {
     const iso = '2027-06-01T12:00:00Z';
     const expected = Math.floor(new Date(iso).getTime() / 1000);
     await tc.sendFileMessage('@chat', temp.filePath, { schedule: iso });
-    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { scheduleDate: expected });
+    expect(tc.client.sendMedia).toHaveBeenCalledWith('@chat', expect.anything(), { schedule: new Date(expected * 1000) });
   });
 
   it('combined silent + noforwards + replyTo passes all in params', async () => {
