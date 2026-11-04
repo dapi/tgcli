@@ -5,6 +5,7 @@ vi.mock('@mtcute/core', () => ({
   InputMedia: {
     auto: vi.fn((path, opts) => ({ path, ...opts })),
     photo: vi.fn((path, opts) => ({ path, ...opts })),
+    video: vi.fn((path, opts) => ({ path, ...opts })),
   },
 }));
 vi.mock('@mtcute/markdown-parser', () => ({
@@ -631,5 +632,70 @@ describe('resolveScheduleDate error handling', () => {
   it('scheduleDate: undefined is treated as absent', async () => {
     await tc.sendTextMessage('@chat', 'hello', { scheduleDate: undefined });
     expect(tc.client.sendText).toHaveBeenCalledWith('@chat', 'hello', undefined);
+  });
+});
+
+describe('video sending', () => {
+  let tc;
+  let temp;
+
+  beforeEach(() => {
+    tc = createMockClient();
+    temp = createTempFile('.mp4');
+    process.env.TGCLI_DISABLE_FFPROBE = '1';
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete process.env.TGCLI_DISABLE_FFPROBE;
+    fs.rmSync(temp.dir, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  it('sendFileMessage sends .mp4 as a streamable video', async () => {
+    const result = await tc.sendFileMessage('@chat', temp.filePath, { caption: 'demo' });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.video).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ supportsStreaming: true }),
+    );
+    expect(InputMedia.auto).not.toHaveBeenCalled();
+    expect(result.method).toBe('sendVideo');
+  });
+
+  it('sendFileMessage keeps .mp4 as a document with forceDocument', async () => {
+    await tc.sendFileMessage('@chat', temp.filePath, { forceDocument: true });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.video).not.toHaveBeenCalled();
+    expect(InputMedia.auto).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ forceDocument: true }),
+    );
+  });
+
+  it('sendVideoMessage passes explicit dimensions, duration and streaming flag', async () => {
+    await tc.sendVideoMessage('@chat', temp.filePath, {
+      caption: '**demo**',
+      parseMode: 'markdown',
+      width: '780',
+      height: '1688',
+      duration: '62',
+      streaming: false,
+      spoiler: true,
+    });
+    const { InputMedia } = await import('@mtcute/core');
+    expect(InputMedia.video).toHaveBeenCalledWith(
+      expect.stringContaining('file:'),
+      expect.objectContaining({ width: 780, height: 1688, duration: 62, supportsStreaming: false, spoiler: true }),
+    );
+    expect(md).toHaveBeenCalledWith('**demo**');
+  });
+
+  it('sendVideoMessage rejects a non-positive dimension', async () => {
+    await expect(tc.sendVideoMessage('@chat', temp.filePath, { width: '-1' })).rejects.toThrow('--width must be a positive number.');
+  });
+
+  it('sendVideoMessage requires --caption with --parse-mode', async () => {
+    await expect(tc.sendVideoMessage('@chat', temp.filePath, { parseMode: 'markdown' })).rejects.toThrow('--parse-mode requires --caption for send video');
   });
 });

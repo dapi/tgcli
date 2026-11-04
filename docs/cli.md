@@ -93,6 +93,7 @@ For owner requests, `--timeout` also cancels Telegram RPCs and file uploads. Can
 - send text --to <id|username> --message "..." [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--no-preview] [--silent] [--no-forwards] [--schedule <iso>]
 - send photo --to <id|username> --photo PATH [--caption] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--retries <n>] [--retry-backoff <ms|constant|linear|exponential>]
 - send file --to <id|username> --file PATH [--caption] [--filename] [--parse-mode markdown|html|none] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler] [--force-document]
+- send video --to <id|username> --video PATH [--caption] [--filename] [--parse-mode markdown|html|none] [--width] [--height] [--duration] [--no-streaming] [--topic] [--reply-to <messageId>] [--silent] [--no-forwards] [--schedule <iso>] [--caption-above] [--spoiler]
   - `--parse-mode` is case-insensitive on input.
   - Allowed values: `markdown`, `html`, `none`.
   - For `send photo` and `send file`, `--parse-mode` requires `--caption`.
@@ -105,7 +106,8 @@ For owner requests, `--timeout` also cancels Telegram RPCs and file uploads. Can
   - `--spoiler` — blur media until tapped. Applies to `send photo` and `send file`.
   - `--retries <n>` — retry transient network/transport failures for `send photo` (default: `2`).
   - `--retry-backoff` accepts either a millisecond value or `constant|linear|exponential`.
-  - `--force-document` — send photo/video as uncompressed document. `send file` only.
+  - `--force-document` — send photo/video as uncompressed document. `send file` only. Without it `send file` sends `.mp4/.mov/.m4v/.webm/.mkv/.avi/.3gp` as a streamable video.
+  - `send video` always sends a streamable video; `--width/--height/--duration` override metadata, otherwise it is read with `ffprobe` when installed. `--no-streaming` disables progressive playback.
 
 ## media
 - media download --chat <id|username> --id <msgId> [--output PATH]

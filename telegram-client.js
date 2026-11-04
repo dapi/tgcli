@@ -9,6 +9,7 @@ import { InputMedia } from '@mtcute/core';
 import { randomLong } from '@mtcute/core/utils.js';
 import { html } from '@mtcute/html-parser';
 import { md } from '@mtcute/markdown-parser';
+import { spawnSync } from 'child_process';
 import EventEmitter from 'events';
 import fs from 'fs';
 import { stat } from 'fs/promises';
@@ -296,6 +297,66 @@ function buildMediaSendParams(options = {}) {
   if (scheduleDate) params.schedule = new Date(scheduleDate * 1000);
   if (options.captionAbove) params.invert = true;
   return Object.keys(params).length ? params : undefined;
+}
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.3gp']);
+
+function isVideoPath(filePath) {
+  return typeof filePath === 'string' && VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function parseVideoDimension(value, name) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number.`);
+  }
+  return Math.round(parsed);
+}
+
+// Reads width/height/duration with ffprobe when it is installed; silently returns {} otherwise.
+// Telegram renders a video without these fields, but with them the preview keeps its aspect
+// ratio and shows the duration before playback.
+function probeVideoMetadata(filePath) {
+  if (process.env.TGCLI_DISABLE_FFPROBE === '1') return {};
+  try {
+    const probe = spawnSync('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height:format=duration',
+      '-of', 'json',
+      filePath,
+    ], { encoding: 'utf8', timeout: 10_000 });
+    if (probe.status !== 0 || !probe.stdout) return {};
+    const parsed = JSON.parse(probe.stdout);
+    const stream = parsed.streams?.[0] ?? {};
+    const duration = Number(parsed.format?.duration);
+    const result = {};
+    if (Number.isFinite(stream.width) && stream.width > 0) result.width = stream.width;
+    if (Number.isFinite(stream.height) && stream.height > 0) result.height = stream.height;
+    if (Number.isFinite(duration) && duration > 0) result.duration = Math.round(duration);
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function buildVideoMediaOptions(filePath, mediaOptions, options = {}) {
+  const explicit = {
+    width: parseVideoDimension(options.width, '--width'),
+    height: parseVideoDimension(options.height, '--height'),
+    duration: parseVideoDimension(options.duration, '--duration'),
+  };
+  const probed = explicit.width && explicit.height && explicit.duration ? {} : probeVideoMetadata(filePath);
+  const videoOptions = {
+    ...mediaOptions,
+    supportsStreaming: options.streaming !== false && options.supportsStreaming !== false,
+  };
+  for (const key of ['width', 'height', 'duration']) {
+    const value = explicit[key] ?? probed[key];
+    if (value) videoOptions[key] = value;
+  }
+  return videoOptions;
 }
 
 function resolveUploadPath(filePath) {
@@ -1459,11 +1520,41 @@ class TelegramClient {
       fileName,
     };
     if (options.spoiler) mediaOptions.spoiler = true;
+    const peerRef = normalizeChannelId(channelId);
+    // Video files are sent as streamable videos unless the caller forces a document:
+    // InputMedia.auto only distinguishes photos from documents.
+    if (!options.forceDocument && isVideoPath(filePath)) {
+      const media = InputMedia.video(uploadPath, buildVideoMediaOptions(path.resolve(filePath), mediaOptions, options));
+      const sent = await this.client.sendMedia(peerRef, media, buildMediaSendParams(options));
+      return buildSendMessageResult(sent, { method: 'sendVideo', defaultMediaType: 'video' });
+    }
     if (options.forceDocument) mediaOptions.forceDocument = true;
     const media = InputMedia.auto(uploadPath, mediaOptions);
-    const peerRef = normalizeChannelId(channelId);
     const sent = await this.client.sendMedia(peerRef, media, buildMediaSendParams(options));
     return buildSendMessageResult(sent, { method: 'sendDocument', defaultMediaType: 'document' });
+  }
+
+  async sendVideoMessage(channelId, filePath, options = {}) {
+    await this.ensureLogin();
+    const uploadPath = resolveUploadPath(filePath);
+    const caption = resolveOptionalCaption(options.caption);
+    const parseMode = normalizeParseMode(options.parseMode);
+    if (parseMode && !caption) {
+      throw new Error('--parse-mode requires --caption for send video');
+    }
+    if (options.captionAbove && !caption) {
+      throw new Error('--caption-above requires --caption for send video');
+    }
+    const parsedCaption = caption ? applyParseMode(caption, parseMode) : undefined;
+    const fileName = typeof options.filename === 'string' && options.filename.trim()
+      ? options.filename.trim()
+      : undefined;
+    const mediaOptions = { caption: parsedCaption, fileName };
+    if (options.spoiler) mediaOptions.spoiler = true;
+    const media = InputMedia.video(uploadPath, buildVideoMediaOptions(path.resolve(filePath), mediaOptions, options));
+    const peerRef = normalizeChannelId(channelId);
+    const sent = await this.client.sendMedia(peerRef, media, buildMediaSendParams(options));
+    return buildSendMessageResult(sent, { method: 'sendVideo', defaultMediaType: 'video' });
   }
 
   async preparePhotoMessage(channelId, filePath, options = {}) {

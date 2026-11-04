@@ -79,7 +79,8 @@ tgcli auth
   - `--spoiler` blurs media until tapped (`send photo`/`send file`)
   - `--retries <n>` retries transient network/transport failures for `send photo`
   - `--retry-backoff <ms|constant|linear|exponential>` controls retry delay for `send photo`
-  - `--force-document` sends photo/video as uncompressed document (`send file` only)
+  - `--force-document` sends photo/video as uncompressed document (`send file` only); otherwise video files go out as streamable videos
+- `send video --to <id|username> --video PATH [--caption] [--parse-mode markdown|html|none] [--width] [--height] [--duration] [--no-streaming]` — video with a player; metadata is auto-read with `ffprobe` when available
   - `--retries <n>` retry on failure with exponential backoff (default 0); JSON output includes `retry_log` and `attempts` when retries occurred
 - Telegram markdown formatting (when `--parse-mode markdown`):
   - Bold: `**text**`

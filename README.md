@@ -126,6 +126,7 @@ tgcli send text --to @username --message "done" --reply-to 123
 tgcli send photo --to @channel --photo ./screenshot.png --caption "UI diff" --json --timeout 30s
 tgcli send file --to @channel --file ./report.pdf --caption "<b>weekly report</b>" --parse-mode html
 tgcli send file --to @channel --file ./report.pdf --reply-to 123
+tgcli send video --to @channel --video ./demo.mp4 --caption "Demo" --parse-mode markdown
 tgcli groups requests list --chat @group --json --timeout 30s
 tgcli server
 ```
