@@ -13,8 +13,11 @@ installed_plist="$HOME/Library/LaunchAgents/$label.plist"
 log_dir="$repo_root/log"
 domain="gui/$(id -u)"
 
-if [ "$("$HOME/.local/bin/tgcli" --version)" != "2.9.1" ]; then
-  echo "Install tgcli 2.9.1 through dotfiles before loading the service" >&2
+expected_version=$(node -p 'require(process.argv[1]).version' "$repo_root/package.json" 2>/dev/null \
+  || sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$repo_root/package.json" | head -1)
+installed_version=$("$HOME/.local/bin/tgcli" --version)
+if [ "$installed_version" != "$expected_version" ]; then
+  echo "Install tgcli $expected_version through dotfiles (make tgcli-install) before loading the service; installed: $installed_version" >&2
   exit 2
 fi
 
@@ -23,7 +26,7 @@ chmod 700 "$log_dir"
 touch "$log_dir/tgcli.log" "$log_dir/tgcli.error.log"
 chmod 600 "$log_dir/tgcli.log" "$log_dir/tgcli.error.log"
 if [ -f "$installed_plist" ]; then
-  cp -p "$installed_plist" "$installed_plist.pre-2.9.1"
+  cp -p "$installed_plist" "$installed_plist.pre-$expected_version"
 fi
 launchctl bootout "$domain/$label" 2>/dev/null || true
 cp "$source_plist" "$installed_plist"
