@@ -409,6 +409,29 @@ function buildProgram() {
     .option('--force-document', 'Send as uncompressed document')
     .option('--retries <n>', 'Max retries on failure', '0')
     .action(withGlobalOptions((globalFlags, options) => runSendFile(globalFlags, options)));
+  send
+    .command('video')
+    .description('Send a video with a player and streaming (mp4/mov/webm)')
+    .option('--to <id|username>', 'Recipient id or username')
+    .addOption(new Option('--chat <id|username>', 'Alias for --to').hideHelp())
+    .option('--video <path>', 'Video path')
+    .addOption(new Option('--file <path>', 'Alias for --video').hideHelp())
+    .option('--caption <text>', 'Optional caption')
+    .option('--parse-mode <mode>', 'Parse mode for caption: markdown|html|none')
+    .option('--filename <name>', 'Override filename')
+    .option('--width <px>', 'Video width (auto-detected with ffprobe when omitted)')
+    .option('--height <px>', 'Video height (auto-detected with ffprobe when omitted)')
+    .option('--duration <seconds>', 'Video duration (auto-detected with ffprobe when omitted)')
+    .option('--no-streaming', 'Disable streaming playback (whole file must download first)')
+    .option('--topic <id>', 'Forum topic id')
+    .option('--reply-to <id>', 'Reply to message id')
+    .option('--silent', 'Send without notification sound')
+    .option('--no-forwards', 'Protect message from forwarding')
+    .option('--caption-above', 'Show caption above media')
+    .option('--spoiler', 'Blur media until tapped')
+    .option('--schedule <iso>', 'Schedule message (ISO 8601 datetime)')
+    .option('--retries <n>', 'Max retries on failure', '0')
+    .action(withGlobalOptions((globalFlags, options) => runSendVideo(globalFlags, options)));
 
   const media = program.command('media').description('Download media');
   media
@@ -3490,6 +3513,67 @@ async function runSendFile(globalFlags, options = {}) {
   }, timeoutMs);
 }
 
+async function runSendVideo(globalFlags, options = {}) {
+  resolveSendAliases(options);
+  const timeoutMs = globalFlags.timeoutMs;
+  return runWithTimeout(async () => {
+    if (!options.to) {
+      throw new Error('--to is required');
+    }
+    if (!options.video && options.file) options.video = options.file;
+    if (!options.video) {
+      throw new Error('--video is required');
+    }
+    const parseMode = validateSendParseMode('send video', options);
+    const storeDir = resolveStoreDir();
+    const release = acquireStoreLock(storeDir);
+    const { telegramClient, messageSyncService } = createServices({ storeDir });
+    try {
+      if (!(await telegramClient.isAuthorized().catch(() => false))) {
+        throw new Error('Not authenticated. Run `node cli.js auth` first.');
+      }
+      const topicId = parsePositiveInt(options.topic, '--topic');
+      const replyToMessageId = parsePositiveInt(options.replyTo, '--reply-to');
+      const scheduleDate = parseScheduleDate(options.schedule);
+      const retries = Math.max(0, parseInt(options.retries, 10) || 0);
+      const { result, retryLog, attempts } = await withSendRetry(
+        () => telegramClient.sendVideoMessage(options.to, options.video, {
+          caption: options.caption,
+          filename: options.filename,
+          topicId,
+          replyToMessageId,
+          parseMode,
+          silent: options.silent || false,
+          noforwards: options.forwards === false,
+          captionAbove: options.captionAbove || false,
+          spoiler: options.spoiler || false,
+          scheduleDate,
+          width: options.width,
+          height: options.height,
+          duration: options.duration,
+          streaming: options.streaming !== false,
+        }),
+        { retries, json: globalFlags.json }
+      );
+      const payload = { channelId: options.to, ...result };
+      if (retryLog.length > 0) {
+        payload.attempts = attempts;
+        payload.retry_log = retryLog;
+      }
+
+      if (globalFlags.json) {
+        writeJson(payload);
+      } else {
+        console.log(`Video sent (${result.messageId}).`);
+      }
+    } finally {
+      await messageSyncService.shutdown();
+      await telegramClient.destroy();
+      release();
+    }
+  }, timeoutMs);
+}
+
 async function runMediaDownload(globalFlags, options = {}) {
   const timeoutMs = globalFlags.timeoutMs;
   return runWithTimeout(async () => {
@@ -4741,6 +4825,7 @@ const ownerCliHandlers = {
   'send text': runSendText,
   'send photo': runSendPhoto,
   'send file': runSendFile,
+  'send video': runSendVideo,
   'media download': runMediaDownload,
   'topics list': runTopicsList,
   'topics search': runTopicsSearch,
