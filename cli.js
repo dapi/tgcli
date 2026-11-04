@@ -767,8 +767,10 @@ function normalizeOwnerArgs(name, args) {
   const normalized = structuredClone(args);
   const options = normalized.at(-1);
   if (options && typeof options === 'object') {
-    const inputField = name === 'send photo' ? 'photo' : name === 'send file' ? 'file' : null;
-    if (inputField && options[inputField]) options[inputField] = path.resolve(options[inputField]);
+    const inputFields = { 'send photo': ['photo'], 'send file': ['file'], 'send video': ['video', 'file'] }[name] ?? [];
+    for (const inputField of inputFields) {
+      if (options[inputField]) options[inputField] = path.resolve(options[inputField]);
+    }
     if (name === 'media download' && options.output) options.output = path.resolve(options.output);
     if (name === 'messages edit-caption') {
       for (const field of ['captionFile', 'expectedTextFile']) {
@@ -807,7 +809,7 @@ function withGlobalOptions(handler) {
       globalFlags = getGlobalFlags(command);
       const name = commandPath(command);
       const actionArgs = args.slice(0, -1);
-      if (name === 'send text' || name === 'send file') {
+      if (name === 'send text' || name === 'send file' || name === 'send video') {
         validateSendParseMode(name, actionArgs.at(-1) ?? {});
       }
       if (name === 'auth' || name === 'auth logout') {
