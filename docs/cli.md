@@ -107,7 +107,7 @@ For owner requests, `--timeout` also cancels Telegram RPCs and file uploads. Can
   - `--retries <n>` — retry transient network/transport failures for `send photo` (default: `2`).
   - `--retry-backoff` accepts either a millisecond value or `constant|linear|exponential`.
   - `--force-document` — send photo/video as uncompressed document. `send file` only. Without it `send file` sends `.mp4/.mov/.m4v/.webm/.mkv/.avi/.3gp` as a streamable video.
-  - `send video` always sends a streamable video; `--width/--height/--duration` override metadata, otherwise it is read with `ffprobe` when installed. `--no-streaming` disables progressive playback.
+  - `send video` always sends a streamable video; `--width/--height/--duration` override metadata, otherwise it is read with `ffprobe` when installed (PATH, Homebrew or `/usr/bin`; `TGCLI_FFPROBE` pins a binary). `--no-streaming` disables progressive playback.
 
 ## media
 - media download --chat <id|username> --id <msgId> [--output PATH]

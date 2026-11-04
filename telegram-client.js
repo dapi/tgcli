@@ -317,10 +317,33 @@ function parseVideoDimension(value, name) {
 // Reads width/height/duration with ffprobe when it is installed; silently returns {} otherwise.
 // Telegram renders a video without these fields, but with them the preview keeps its aspect
 // ratio and shows the duration before playback.
+// The tgcli wrapper runs with a minimal PATH, so look in the usual Homebrew/Linux
+// locations as well; TGCLI_FFPROBE pins an explicit binary.
+function resolveFfprobe() {
+  const candidates = [
+    process.env.TGCLI_FFPROBE,
+    'ffprobe',
+    '/opt/homebrew/bin/ffprobe',
+    '/usr/local/bin/ffprobe',
+    '/usr/bin/ffprobe',
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (candidate === 'ffprobe') {
+      const check = spawnSync('ffprobe', ['-version'], { stdio: 'ignore', timeout: 5_000 });
+      if (check.status === 0) return candidate;
+      continue;
+    }
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function probeVideoMetadata(filePath) {
   if (process.env.TGCLI_DISABLE_FFPROBE === '1') return {};
+  const ffprobe = resolveFfprobe();
+  if (!ffprobe) return {};
   try {
-    const probe = spawnSync('ffprobe', [
+    const probe = spawnSync(ffprobe, [
       '-v', 'error',
       '-select_streams', 'v:0',
       '-show_entries', 'stream=width,height:format=duration',
